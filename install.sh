@@ -13,6 +13,8 @@ Help
 exit 1
 fi
 
+
+sudo apt update
 # Install dependencies
 cat requirements.txt | sudo xargs apt install -y
 
@@ -30,7 +32,6 @@ unzip -aoq cryptopp870.zip -d cryptopp
 (cd cryptopp && sudo make install)
 
 # Install OpenSSL library
-sudo apt update
 sudo apt install openssl -y
 
 sudo ip tuntap add name tun0 mode tun

@@ -4,3 +4,4 @@ g++
 make
 jq
 curl
+openssl
