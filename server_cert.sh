@@ -11,7 +11,7 @@ CA_CERT="ca_cert.pem"
 rm -rf "$SERVER_KEY" "$SERVER_CSR" "$SERVER_CERT"
 
 # Generate server private key using Dilithium-5 algorithm
-openssl genpkey -algorithm dilithium5 -out "$SERVER_KEY"
+openssl genpkey -algorithm dilithium3 -out "$SERVER_KEY"
 
 # Generate server certificate signing request (CSR)
 openssl req -new -sha256 -key "$SERVER_KEY" -out "$SERVER_CSR"
