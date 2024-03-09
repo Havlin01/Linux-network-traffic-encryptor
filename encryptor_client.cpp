@@ -30,9 +30,9 @@
 #define MAXLINE 1500
 #define TAG_SIZE 16
 
-#define CLIENT_CERT "client.crt"
-#define CLIENT_KEY "client.key"
-#define SERVER_CA_CERT "ca.crt"
+#define CLIENT_CERT "client_cert.pem"
+#define CLIENT_KEY "client_key.pem"
+#define SERVER_CA_CERT "ca_cert.pem"
 
 #include <iostream>
 using std::cerr;
