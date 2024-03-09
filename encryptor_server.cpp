@@ -33,6 +33,9 @@
 #include <stdlib.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/x509.h>
+#include <openssl/pem.h>
+#include <openssl/evp.h>
 
 #define PORT 62000
 #define KEYPORT 61000
@@ -106,111 +109,130 @@ int counter = 0;
 void cert_authenticate()
 {
 
-    SSL_CTX *ctx;
-    SSL *ssl;
-    BIO *acc, *client;
+   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd == -1) {
+        std::cerr << "Socket creation failed." << std::endl;
+        return 1;
+    }
 
-    // Initialize OpenSSL
+    // Příprava serverové adresy
+    struct sockaddr_in server_addr, client_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(443);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    // Přiřazení adresy a portu k socketu
+    if (bind(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
+        std::cerr << "Socket bind failed." << std::endl;
+        close(sockfd);
+        return 1;
+    }
+
+    // Příprava na naslouchání spojení
+    if (listen(sockfd, 5) == -1) {
+        std::cerr << "Listen failed." << std::endl;
+        close(sockfd);
+        return 1;
+    }
+
+    // Přijetí připojení
+    socklen_t client_len = sizeof(client_addr);
+    int client_sockfd = accept(sockfd, (struct sockaddr*)&client_addr, &client_len);
+    if (client_sockfd == -1) {
+        std::cerr << "Accept failed." << std::endl;
+        close(sockfd);
+        return 1;
+    }
+
+    // Inicializace SSL
     SSL_library_init();
     OpenSSL_add_all_algorithms();
-    SSL_load_error_strings();
+    SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
+    if (!ctx) {
+        std::cerr << "SSL context creation failed." << std::endl;
+        close(client_sockfd);
+        close(sockfd);
+        return 1;
+    }
+    SSL* ssl = SSL_new(ctx);
+    if (!ssl) {
+        std::cerr << "SSL creation failed." << std::endl;
+        close(client_sockfd);
+        close(sockfd);
+        SSL_CTX_free(ctx);
+        return 1;
+    }
+    SSL_set_fd(ssl, client_sockfd);
 
-    // Create a new SSL context
-    ctx = SSL_CTX_new(SSLv23_server_method());
-    if (ctx == NULL)
-    {
-        printf("Error while creating context\n");
-        exit(EXIT_FAILURE);
+    // Nastavení certifikátu serveru
+    // OQS_PROVIDER_dilithium3
+    EVP_PKEY* server_private_key = SERVER_KEY; // Load server private key
+    X509* server_cert = SERVER_CERT; // Load server certificate
+    SSL_use_certificate(ssl, server_cert);
+    SSL_use_PrivateKey(ssl, server_private_key);
+
+    // Příprava na SSL spojení
+    if (SSL_accept(ssl) <= 0) {
+        std::cerr << "SSL accept failed." << std::endl;
+        SSL_free(ssl);
+        close(client_sockfd);
+        close(sockfd);
+        SSL_CTX_free(ctx);
+        return 1;
     }
 
-    // Set the local certificate from CertFile
-    if (SSL_CTX_use_certificate_file(ctx, SERVER_CERT, SSL_FILETYPE_PEM) <= 0)
-    {
-        printf("Error while loading server certificate.\n");
-        //print the error
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    // Load the private key
-    if (SSL_CTX_use_PrivateKey_file(ctx, SERVER_KEY, SSL_FILETYPE_PEM) <= 0)
-    {
-        printf("Error while loading server key.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    // Load the CA certificate
-    if (SSL_CTX_load_verify_locations(ctx, SERVER_CA_CERT, NULL) != 1)
-    {
-        printf("Error loading a client CA certificate.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    // Create BIO acceptor
-    acc = BIO_new_accept("443");
-    if (acc == NULL)
-    {
-        printf("Error creating BIO acceptor.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    // Add acceptor to context
-    if (BIO_do_accept(acc) <= 0)
-    {
-        printf("Error adding acceptor to context.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    
-    while (counter < 1)
-    {
-        if (BIO_do_accept(acc) <= 0)
-        {
-            printf("Error while receiving.\n");
-            exit(EXIT_FAILURE);
-        }
-
-        // Acquiering client BIO
-        client = BIO_pop(acc);
-        if (client == NULL)
-        {
-            printf("Error acquiring client BIO.\n");
-            exit(EXIT_FAILURE);
-        }
-
-        // Create new SSL connection state
-        ssl = SSL_new(ctx);
-        if (ssl == NULL)
-        {
-            printf("Error while creating SSL connection.\n");
-            exit(EXIT_FAILURE);
-        }
-
-        // Connect the SSL object with the BIO
-        SSL_set_bio(ssl, client, client);
-
-        // Establish the SSL connection
-        if (SSL_accept(ssl) <= 0)
-        {
-            printf("Error when establishing SSL connection.\n");
-            exit(EXIT_FAILURE);
-        }
-
-        // Veryfying the certificate
-        if (SSL_get_verify_result(ssl) != X509_V_OK)
-        {
-            printf("Error while verifying the certificate.\n");
-            exit(EXIT_FAILURE);
-        }
-
-        // Shutdown the SSL connection
+    // Ověření klientova certifikátu
+    EVP_PKEY* client_public_key = SERVER_CA_CERT; // Load client public key
+    if (!verify_peer_certificate(ssl, client_public_key)) {
+        std::cerr << "Client certificate is not valid." << std::endl;
         SSL_shutdown(ssl);
         SSL_free(ssl);
-        counter++;
+        close(client_sockfd);
+        close(sockfd);
+        SSL_CTX_free(ctx);
+        return 1;
     }
 
-    BIO_free(acc);
+    std::cout << "Client certificate is valid." << std::endl;
+
+
+    // Uzavření spojení
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+    close(client_sockfd);
+    close(sockfd);
     SSL_CTX_free(ctx);
+}
+
+bool verify_peer_certificate(SSL* ssl, EVP_PKEY* peer_public_key) {
+    X509* cert = SSL_get_peer_certificate(ssl);
+    if (!cert) {
+        std::cerr << "Failed to get certificate from peer." << std::endl;
+        return false;
+    }
+
+    // Získání veřejného klíče z certifikátu
+    EVP_PKEY* public_key = X509_get_pubkey(cert);
+    if (!public_key) {
+        std::cerr << "Failed to get public key from certificate." << std::endl;
+        X509_free(cert);
+        return false;
+    }
+
+    // Porovnání veřejných klíčů
+    if (EVP_PKEY_cmp(public_key, peer_public_key) != 1) {
+        std::cerr << "Public key does not match." << std::endl;
+        EVP_PKEY_free(public_key);
+        X509_free(cert);
+        return false;
+    }
+
+    std::cout << "Public key matches." << std::endl;
+
+    // Uvolnění paměti
+    EVP_PKEY_free(public_key);
+    X509_free(cert);
+    return true;
 }
 
 string convertToString(char *a)
