@@ -15,6 +15,6 @@ openssl genpkey -algorithm dilithium5 -out "$SERVER_KEY"
 openssl req -new -sha256 -key "$SERVER_KEY" -out "$SERVER_CSR" -subj "/CN=Server"
 
 # Sign the CSR with the CA's private key to create the server certificate
-openssl x509 -req -sha256 -in "$SERVER_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" -CAcreateserial -out "$SERVER_CERT" -days 365
+openssl x509 -req -in "$SERVER_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" -CAcreateserial -out "$SERVER_CERT" -days 365
 
 echo "Server certificate signed successfully."
