@@ -106,106 +106,103 @@ int counter = 0;
 
 void cert_authenticate(const char *srv_ip)
 {
-      // Vytvoření socketu
+// Create a TCP socket
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1) {
         std::cerr << "Socket creation failed." << std::endl;
-        return 1;
+        exit(EXIT_FAILURE);
     }
 
-    // Příprava serverové adresy
+    // Prepare server address
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(443);
+    server_addr.sin_port = htons(433);
     inet_pton(AF_INET, srv_ip, &server_addr.sin_addr);
 
-    // Připojení ke serveru
+    // Connect to the server
     if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
         std::cerr << "Connection failed." << std::endl;
         close(sockfd);
-        return 1;
+        exit(EXIT_FAILURE);
     }
 
-    // Inicializace SSL
+    // Initialize OpenSSL
     SSL_library_init();
-    OpenSSL_add_all_algorithms();
     SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
     if (!ctx) {
         std::cerr << "SSL context creation failed." << std::endl;
         close(sockfd);
-        return 1;
+        exit(EXIT_FAILURE);
     }
+
+    // Create SSL object
     SSL* ssl = SSL_new(ctx);
     if (!ssl) {
         std::cerr << "SSL creation failed." << std::endl;
         close(sockfd);
         SSL_CTX_free(ctx);
-        return 1;
+        exit(EXIT_FAILURE);
     }
-    SSL_set_fd(ssl, sockfd);
 
-    // Navázání SSL spojení
+    // Associate SSL object with socket
+    if (SSL_set_fd(ssl, sockfd) == 0) {
+        std::cerr << "Failed to set SSL file descriptor." << std::endl;
+        SSL_free(ssl);
+        close(sockfd);
+        SSL_CTX_free(ctx);
+        exit(EXIT_FAILURE);
+    }
+
+    // Establish SSL connection
     if (SSL_connect(ssl) <= 0) {
         std::cerr << "SSL connection failed." << std::endl;
         SSL_free(ssl);
         close(sockfd);
         SSL_CTX_free(ctx);
-        return 1;
+        exit(EXIT_FAILURE);
     }
 
-    // Ověření serverového certifikátu
-    // OQS_PROVIDER_dilithium3
-    EVP_PKEY* server_public_key = SERVER_CA_CERT; // Load server public key
-    if (!verify_peer_certificate(ssl, server_public_key)) {
-        std::cerr << "Server certificate is not valid." << std::endl;
+    // Verify server certificate
+    if (!verify_certificate(ssl)) {
+        std::cerr << "Server certificate verification failed." << std::endl;
         SSL_shutdown(ssl);
         SSL_free(ssl);
         close(sockfd);
         SSL_CTX_free(ctx);
-        return 1;
+        exit(EXIT_FAILURE);
     }
 
     std::cout << "Server certificate is valid." << std::endl;
 
-    // Pokračování s komunikací
 
-    // Uzavření spojení
+    // Close the connection
     SSL_shutdown(ssl);
     SSL_free(ssl);
     close(sockfd);
     SSL_CTX_free(ctx);
+
 }
 
-bool verify_peer_certificate(SSL* ssl, EVP_PKEY* peer_public_key) {
+bool verify_certificate(SSL* ssl) {
     X509* cert = SSL_get_peer_certificate(ssl);
     if (!cert) {
         std::cerr << "Failed to get certificate from peer." << std::endl;
         return false;
     }
 
-    // Získání veřejného klíče z certifikátu
-    EVP_PKEY* public_key = X509_get_pubkey(cert);
-    if (!public_key) {
-        std::cerr << "Failed to get public key from certificate." << std::endl;
+    // Perform certificate verification here
+    long res = SSL_get_verify_result(ssl);
+    if (res != X509_V_OK) {
+        std::cerr << "Certificate verification error: " << X509_verify_cert_error_string(res) << std::endl;
         X509_free(cert);
         return false;
     }
 
-    // Porovnání veřejných klíčů
-    if (EVP_PKEY_cmp(public_key, peer_public_key) != 1) {
-        std::cerr << "Public key does not match." << std::endl;
-        EVP_PKEY_free(public_key);
-        X509_free(cert);
-        return false;
-    }
-
-    std::cout << "Public key matches." << std::endl;
-
-    // Uvolnění paměti
-    EVP_PKEY_free(public_key);
+    std::cout << "Certificate verification passed." << std::endl;
     X509_free(cert);
     return true;
 }
+
 
 string convertToString(char *a)
 {

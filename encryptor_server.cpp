@@ -108,130 +108,125 @@ int counter = 0;
 
 void cert_authenticate()
 {
-
-   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd == -1) {
+ int server_sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_sockfd == -1) {
         std::cerr << "Socket creation failed." << std::endl;
-        return 1;
+        exit(EXIT_FAILURE);
     }
 
-    // Příprava serverové adresy
-    struct sockaddr_in server_addr, client_addr;
+    // Prepare server address
+    struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(443);
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(SERVER_PORT);
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    // Přiřazení adresy a portu k socketu
-    if (bind(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
-        std::cerr << "Socket bind failed." << std::endl;
-        close(sockfd);
-        return 1;
+    // Bind the socket
+    if (bind(server_sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
+        std::cerr << "Binding failed." << std::endl;
+        close(server_sockfd);
+        exit(EXIT_FAILURE);
     }
 
-    // Příprava na naslouchání spojení
-    if (listen(sockfd, 5) == -1) {
-        std::cerr << "Listen failed." << std::endl;
-        close(sockfd);
-        return 1;
+    // Listen for connections
+    if (listen(server_sockfd, 5) == -1) {
+        std::cerr << "Listening failed." << std::endl;
+        close(server_sockfd);
+        exit(EXIT_FAILURE);
     }
 
-    // Přijetí připojení
+    // Accept connections
+    struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
-    int client_sockfd = accept(sockfd, (struct sockaddr*)&client_addr, &client_len);
+    int client_sockfd = accept(server_sockfd, (struct sockaddr*)&client_addr, &client_len);
     if (client_sockfd == -1) {
-        std::cerr << "Accept failed." << std::endl;
-        close(sockfd);
-        return 1;
+        std::cerr << "Accepting failed." << std::endl;
+        close(server_sockfd);
+        exit(EXIT_FAILURE);
     }
 
-    // Inicializace SSL
+    // Initialize OpenSSL
     SSL_library_init();
-    OpenSSL_add_all_algorithms();
     SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
     if (!ctx) {
         std::cerr << "SSL context creation failed." << std::endl;
         close(client_sockfd);
-        close(sockfd);
-        return 1;
+        close(server_sockfd);
+        exit(EXIT_FAILURE);
     }
+
+    // Load certificate and private key
+    if (!load_certificate_chain(ctx, "server.crt", "server.key")) {
+        std::cerr << "Loading certificate and private key failed." << std::endl;
+        close(client_sockfd);
+        close(server_sockfd);
+        SSL_CTX_free(ctx);
+        exit(EXIT_FAILURE);
+    }
+
+    // Create SSL object
     SSL* ssl = SSL_new(ctx);
     if (!ssl) {
         std::cerr << "SSL creation failed." << std::endl;
         close(client_sockfd);
-        close(sockfd);
+        close(server_sockfd);
         SSL_CTX_free(ctx);
-        return 1;
+        exit(EXIT_FAILURE);
     }
-    SSL_set_fd(ssl, client_sockfd);
 
-    // Nastavení certifikátu serveru
-    // OQS_PROVIDER_dilithium3
-    EVP_PKEY* server_private_key = SERVER_KEY; // Load server private key
-    X509* server_cert = SERVER_CERT; // Load server certificate
-    SSL_use_certificate(ssl, server_cert);
-    SSL_use_PrivateKey(ssl, server_private_key);
+    // Associate SSL object with socket
+    if (SSL_set_fd(ssl, client_sockfd) == 0) {
+        std::cerr << "Failed to set SSL file descriptor." << std::endl;
+        SSL_free(ssl);
+        close(client_sockfd);
+        close(server_sockfd);
+        SSL_CTX_free(ctx);
+        exit(EXIT_FAILURE);
+    }
 
-    // Příprava na SSL spojení
+    // Accept SSL connection
     if (SSL_accept(ssl) <= 0) {
         std::cerr << "SSL accept failed." << std::endl;
         SSL_free(ssl);
         close(client_sockfd);
-        close(sockfd);
+        close(server_sockfd);
         SSL_CTX_free(ctx);
-        return 1;
+        exit(EXIT_FAILURE);
     }
 
-    // Ověření klientova certifikátu
-    EVP_PKEY* client_public_key = SERVER_CA_CERT; // Load client public key
-    if (!verify_peer_certificate(ssl, client_public_key)) {
-        std::cerr << "Client certificate is not valid." << std::endl;
-        SSL_shutdown(ssl);
-        SSL_free(ssl);
-        close(client_sockfd);
-        close(sockfd);
-        SSL_CTX_free(ctx);
-        return 1;
+    // Verify client certificate
+    if (SSL_get_verify_mode(ssl) & SSL_VERIFY_PEER) {
+        if (SSL_get_verify_result(ssl) != X509_V_OK) {
+            std::cerr << "Client certificate verification failed." << std::endl;
+            SSL_shutdown(ssl);
+            SSL_free(ssl);
+            close(client_sockfd);
+            close(server_sockfd);
+            SSL_CTX_free(ctx);
+            exit(EXIT_FAILURE);
+        }
+        std::cout << "Client certificate is valid." << std::endl;
     }
 
-    std::cout << "Client certificate is valid." << std::endl;
+    // Continue with communication
+    // ...
 
-
-    // Uzavření spojení
+    // Close the connection
     SSL_shutdown(ssl);
     SSL_free(ssl);
     close(client_sockfd);
-    close(sockfd);
+    close(server_sockfd);
     SSL_CTX_free(ctx);
 }
 
-bool verify_peer_certificate(SSL* ssl, EVP_PKEY* peer_public_key) {
-    X509* cert = SSL_get_peer_certificate(ssl);
-    if (!cert) {
-        std::cerr << "Failed to get certificate from peer." << std::endl;
+bool load_certificate_chain(SSL_CTX* ctx, const char* cert_file, const char* key_file) {
+    if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
         return false;
     }
-
-    // Získání veřejného klíče z certifikátu
-    EVP_PKEY* public_key = X509_get_pubkey(cert);
-    if (!public_key) {
-        std::cerr << "Failed to get public key from certificate." << std::endl;
-        X509_free(cert);
+    if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
         return false;
     }
-
-    // Porovnání veřejných klíčů
-    if (EVP_PKEY_cmp(public_key, peer_public_key) != 1) {
-        std::cerr << "Public key does not match." << std::endl;
-        EVP_PKEY_free(public_key);
-        X509_free(cert);
-        return false;
-    }
-
-    std::cout << "Public key matches." << std::endl;
-
-    // Uvolnění paměti
-    EVP_PKEY_free(public_key);
-    X509_free(cert);
     return true;
 }
 
