@@ -104,6 +104,27 @@ string kyber_cipher_data_str;
 string qkd_parameter;
 int counter = 0;
 
+
+bool verify_certificate(SSL* ssl) {
+    X509* cert = SSL_get_peer_certificate(ssl);
+    if (!cert) {
+        std::cerr << "Failed to get certificate from peer." << std::endl;
+        return false;
+    }
+
+    // Perform certificate verification here
+    long res = SSL_get_verify_result(ssl);
+    if (res != X509_V_OK) {
+        std::cerr << "Certificate verification error: " << X509_verify_cert_error_string(res) << std::endl;
+        X509_free(cert);
+        return false;
+    }
+
+    std::cout << "Certificate verification passed." << std::endl;
+    X509_free(cert);
+    return true;
+}
+
 void cert_authenticate(const char *srv_ip)
 {
 // Create a TCP socket
@@ -183,25 +204,7 @@ void cert_authenticate(const char *srv_ip)
 
 }
 
-bool verify_certificate(SSL* ssl) {
-    X509* cert = SSL_get_peer_certificate(ssl);
-    if (!cert) {
-        std::cerr << "Failed to get certificate from peer." << std::endl;
-        return false;
-    }
 
-    // Perform certificate verification here
-    long res = SSL_get_verify_result(ssl);
-    if (res != X509_V_OK) {
-        std::cerr << "Certificate verification error: " << X509_verify_cert_error_string(res) << std::endl;
-        X509_free(cert);
-        return false;
-    }
-
-    std::cout << "Certificate verification passed." << std::endl;
-    X509_free(cert);
-    return true;
-}
 
 
 string convertToString(char *a)

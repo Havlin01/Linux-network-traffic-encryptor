@@ -106,6 +106,19 @@ string kyber_cipher_data_str;
 string qkd_parameter;
 int counter = 0;
 
+
+bool load_certificate_chain(SSL_CTX* ctx, const char* cert_file, const char* key_file) {
+    if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    return true;
+}
+
 void cert_authenticate()
 {
  int server_sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -117,7 +130,7 @@ void cert_authenticate()
     // Prepare server address
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(SERVER_PORT);
+    server_addr.sin_port = htons(433);
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     // Bind the socket
@@ -155,7 +168,7 @@ void cert_authenticate()
     }
 
     // Load certificate and private key
-    if (!load_certificate_chain(ctx, "server.crt", "server.key")) {
+    if (!load_certificate_chain(ctx, SERVER_CERT, SERVER_KEY)) {
         std::cerr << "Loading certificate and private key failed." << std::endl;
         close(client_sockfd);
         close(server_sockfd);
@@ -218,17 +231,7 @@ void cert_authenticate()
     SSL_CTX_free(ctx);
 }
 
-bool load_certificate_chain(SSL_CTX* ctx, const char* cert_file, const char* key_file) {
-    if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0) {
-        ERR_print_errors_fp(stderr);
-        return false;
-    }
-    if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
-        ERR_print_errors_fp(stderr);
-        return false;
-    }
-    return true;
-}
+
 
 string convertToString(char *a)
 {
