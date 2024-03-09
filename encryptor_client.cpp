@@ -27,6 +27,7 @@
 #include <openssl/x509.h>
 #include <openssl/pem.h>
 #include <openssl/evp.h>
+#include <qs_provider.h>
 
 #define PORT 62000
 #define KEYPORT 61000
@@ -104,17 +105,19 @@ string kyber_cipher_data_str;
 string qkd_parameter;
 int counter = 0;
 
-
-bool verify_certificate(SSL* ssl) {
-    X509* cert = SSL_get_peer_certificate(ssl);
-    if (!cert) {
+bool verify_certificate(SSL *ssl)
+{
+    X509 *cert = SSL_get_peer_certificate(ssl);
+    if (!cert)
+    {
         std::cerr << "Failed to get certificate from peer." << std::endl;
         return false;
     }
 
     // Perform certificate verification here
     long res = SSL_get_verify_result(ssl);
-    if (res != X509_V_OK) {
+    if (res != X509_V_OK)
+    {
         std::cerr << "Certificate verification error: " << X509_verify_cert_error_string(res) << std::endl;
         X509_free(cert);
         return false;
@@ -127,9 +130,12 @@ bool verify_certificate(SSL* ssl) {
 
 void cert_authenticate(const char *srv_ip)
 {
-// Create a TCP socket
+    OQS_init();
+
+    // Create a TCP socket
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd == -1) {
+    if (sockfd == -1)
+    {
         std::cerr << "Socket creation failed." << std::endl;
         exit(EXIT_FAILURE);
     }
@@ -137,11 +143,12 @@ void cert_authenticate(const char *srv_ip)
     // Prepare server address
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(433);
-    inet_pton(AF_INET, srv_ip, &server_addr.sin_addr);
+    server_addr.sin_port = htons(SERVER_PORT);
+    inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr);
 
     // Connect to the server
-    if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
+    if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1)
+    {
         std::cerr << "Connection failed." << std::endl;
         close(sockfd);
         exit(EXIT_FAILURE);
@@ -149,16 +156,18 @@ void cert_authenticate(const char *srv_ip)
 
     // Initialize OpenSSL
     SSL_library_init();
-    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
-    if (!ctx) {
+    SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+    if (!ctx)
+    {
         std::cerr << "SSL context creation failed." << std::endl;
         close(sockfd);
         exit(EXIT_FAILURE);
     }
 
     // Create SSL object
-    SSL* ssl = SSL_new(ctx);
-    if (!ssl) {
+    SSL *ssl = SSL_new(ctx);
+    if (!ssl)
+    {
         std::cerr << "SSL creation failed." << std::endl;
         close(sockfd);
         SSL_CTX_free(ctx);
@@ -166,7 +175,8 @@ void cert_authenticate(const char *srv_ip)
     }
 
     // Associate SSL object with socket
-    if (SSL_set_fd(ssl, sockfd) == 0) {
+    if (SSL_set_fd(ssl, sockfd) == 0)
+    {
         std::cerr << "Failed to set SSL file descriptor." << std::endl;
         SSL_free(ssl);
         close(sockfd);
@@ -175,7 +185,8 @@ void cert_authenticate(const char *srv_ip)
     }
 
     // Establish SSL connection
-    if (SSL_connect(ssl) <= 0) {
+    if (SSL_connect(ssl) <= 0)
+    {
         std::cerr << "SSL connection failed." << std::endl;
         SSL_free(ssl);
         close(sockfd);
@@ -184,7 +195,8 @@ void cert_authenticate(const char *srv_ip)
     }
 
     // Verify server certificate
-    if (!verify_certificate(ssl)) {
+    if (!verify_certificate(ssl))
+    {
         std::cerr << "Server certificate verification failed." << std::endl;
         SSL_shutdown(ssl);
         SSL_free(ssl);
@@ -195,17 +207,12 @@ void cert_authenticate(const char *srv_ip)
 
     std::cout << "Server certificate is valid." << std::endl;
 
-
     // Close the connection
     SSL_shutdown(ssl);
     SSL_free(ssl);
     close(sockfd);
     SSL_CTX_free(ctx);
-
 }
-
-
-
 
 string convertToString(char *a)
 {

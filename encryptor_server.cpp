@@ -36,6 +36,7 @@
 #include <openssl/x509.h>
 #include <openssl/pem.h>
 #include <openssl/evp.h>
+#include <qs_provider.h>
 
 #define PORT 62000
 #define KEYPORT 61000
@@ -43,7 +44,7 @@
 #define TAG_SIZE 16
 
 #define SERVER_CERT "server_cert.pem" // Název souboru serverového certifikátu
-#define SERVER_KEY "server_key.pem"  // Název souboru serverového klíče
+#define SERVER_KEY "server_key.pem"   // Název souboru serverového klíče
 #define SERVER_CA_CERT "ca_cert.pem"  // Cesta k certifikátu certifikační autority klienta
 
 #include <iostream>
@@ -106,13 +107,15 @@ string kyber_cipher_data_str;
 string qkd_parameter;
 int counter = 0;
 
-
-bool load_certificate_chain(SSL_CTX* ctx, const char* cert_file, const char* key_file) {
-    if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0) {
+bool load_certificate_chain(SSL_CTX *ctx, const char *cert_file, const char *key_file)
+{
+    if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
+    {
         ERR_print_errors_fp(stderr);
         return false;
     }
-    if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
+    if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0)
+    {
         ERR_print_errors_fp(stderr);
         return false;
     }
@@ -121,8 +124,11 @@ bool load_certificate_chain(SSL_CTX* ctx, const char* cert_file, const char* key
 
 void cert_authenticate()
 {
- int server_sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_sockfd == -1) {
+    OQS_init();
+
+    int server_sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_sockfd == -1)
+    {
         std::cerr << "Socket creation failed." << std::endl;
         exit(EXIT_FAILURE);
     }
@@ -134,14 +140,16 @@ void cert_authenticate()
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     // Bind the socket
-    if (bind(server_sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
+    if (bind(server_sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1)
+    {
         std::cerr << "Binding failed." << std::endl;
         close(server_sockfd);
         exit(EXIT_FAILURE);
     }
 
     // Listen for connections
-    if (listen(server_sockfd, 5) == -1) {
+    if (listen(server_sockfd, 5) == -1)
+    {
         std::cerr << "Listening failed." << std::endl;
         close(server_sockfd);
         exit(EXIT_FAILURE);
@@ -150,8 +158,9 @@ void cert_authenticate()
     // Accept connections
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
-    int client_sockfd = accept(server_sockfd, (struct sockaddr*)&client_addr, &client_len);
-    if (client_sockfd == -1) {
+    int client_sockfd = accept(server_sockfd, (struct sockaddr *)&client_addr, &client_len);
+    if (client_sockfd == -1)
+    {
         std::cerr << "Accepting failed." << std::endl;
         close(server_sockfd);
         exit(EXIT_FAILURE);
@@ -159,8 +168,9 @@ void cert_authenticate()
 
     // Initialize OpenSSL
     SSL_library_init();
-    SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
-    if (!ctx) {
+    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
+    if (!ctx)
+    {
         std::cerr << "SSL context creation failed." << std::endl;
         close(client_sockfd);
         close(server_sockfd);
@@ -168,7 +178,8 @@ void cert_authenticate()
     }
 
     // Load certificate and private key
-    if (!load_certificate_chain(ctx, SERVER_CERT, SERVER_KEY)) {
+    if (!load_certificate_chain(ctx, SERVER_CERT, SERVER_KEY))
+    {
         std::cerr << "Loading certificate and private key failed." << std::endl;
         close(client_sockfd);
         close(server_sockfd);
@@ -177,8 +188,9 @@ void cert_authenticate()
     }
 
     // Create SSL object
-    SSL* ssl = SSL_new(ctx);
-    if (!ssl) {
+    SSL *ssl = SSL_new(ctx);
+    if (!ssl)
+    {
         std::cerr << "SSL creation failed." << std::endl;
         close(client_sockfd);
         close(server_sockfd);
@@ -187,7 +199,8 @@ void cert_authenticate()
     }
 
     // Associate SSL object with socket
-    if (SSL_set_fd(ssl, client_sockfd) == 0) {
+    if (SSL_set_fd(ssl, client_sockfd) == 0)
+    {
         std::cerr << "Failed to set SSL file descriptor." << std::endl;
         SSL_free(ssl);
         close(client_sockfd);
@@ -197,7 +210,8 @@ void cert_authenticate()
     }
 
     // Accept SSL connection
-    if (SSL_accept(ssl) <= 0) {
+    if (SSL_accept(ssl) <= 0)
+    {
         std::cerr << "SSL accept failed." << std::endl;
         SSL_free(ssl);
         close(client_sockfd);
@@ -207,8 +221,10 @@ void cert_authenticate()
     }
 
     // Verify client certificate
-    if (SSL_get_verify_mode(ssl) & SSL_VERIFY_PEER) {
-        if (SSL_get_verify_result(ssl) != X509_V_OK) {
+    if (SSL_get_verify_mode(ssl) & SSL_VERIFY_PEER)
+    {
+        if (SSL_get_verify_result(ssl) != X509_V_OK)
+        {
             std::cerr << "Client certificate verification failed." << std::endl;
             SSL_shutdown(ssl);
             SSL_free(ssl);
@@ -230,8 +246,6 @@ void cert_authenticate()
     close(server_sockfd);
     SSL_CTX_free(ctx);
 }
-
-
 
 string convertToString(char *a)
 {
@@ -905,8 +919,6 @@ int main(int argc, char *argv[])
         help();
         return 0;
     }*/
-
-   
 
     string qkd_ip = "";
     // First argument - QKD server IP address
