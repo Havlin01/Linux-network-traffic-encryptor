@@ -8,6 +8,8 @@ SERVER_CERT="server_cert.pem"
 CA_KEY="ca_key.pem"
 CA_CERT="ca_cert.pem"
 
+rm -rf "$SERVER_KEY" "$SERVER_CSR" "$SERVER_CERT"
+
 # Generate server private key using Dilithium-5 algorithm
 openssl genpkey -algorithm dilithium5 -out "$SERVER_KEY"
 
