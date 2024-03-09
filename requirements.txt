@@ -5,5 +5,3 @@ make
 jq
 curl
 openssl
-liboqs
-oqs-provider
