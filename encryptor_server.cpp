@@ -896,7 +896,7 @@ int main(int argc, char *argv[])
 
     //******** SERVER MODE: ********//
 
-     try
+    try
     {
         cert_authenticate();
     }
