@@ -41,7 +41,7 @@
 
 #define SERVER_CERT "server.crt" // Název souboru serverového certifikátu
 #define SERVER_KEY "server.key"  // Název souboru serverového klíče
-#define CLIENT_CA_CERT "ca.crt"  // Cesta k certifikátu certifikační autority klienta
+#define SERVER_CA_CERT "ca.crt"  // Cesta k certifikátu certifikační autority klienta
 
 #include <iostream>
 using std::cerr;
@@ -124,7 +124,7 @@ void cert_authenticate()
     }
 
     // Set the local certificate from CertFile
-    if (SSL_CTX_use_certificate_file(ctx, SERVER_CERT, SSL_FILETYPE_PEM) <= 0)
+    if (SSL_CTX_use_certificate_file(ctx, "server.crt", SSL_FILETYPE_PEM) <= 0)
     {
         printf("Error while loading server certificate.\n");
         exit(EXIT_FAILURE);
@@ -138,7 +138,7 @@ void cert_authenticate()
     }
 
     // Load the CA certificate
-    if (SSL_CTX_load_verify_locations(ctx, CLIENT_CA_CERT, NULL) != 1)
+    if (SSL_CTX_load_verify_locations(ctx, SERVER_CA_CERT, NULL) != 1)
     {
         printf("Error loading a client CA certificate.\n");
         exit(EXIT_FAILURE);
