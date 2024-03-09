@@ -12,7 +12,7 @@ CA_CERT="ca.crt"
 openssl genpkey -algorithm dilithium5 -out "$CLIENT_KEY"
 
 # Generate server certificate signing request (CSR)
-openssl req -new -key "$CLIENT_KEY" -out "$CLIENT_CSR" -subj "/CN=Client"
+openssl req -new -key "$CLIENT_KEY" -out "$CLIENT_CSR"
 
 # Sign the CSR with the CA's private key to create the server certificate
 openssl x509 -req -in "$CLIENT_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" -CAcreateserial -out "$CLIENT_CERT" -days 365
