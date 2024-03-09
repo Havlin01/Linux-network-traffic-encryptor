@@ -5,8 +5,8 @@
 CLIENT_KEY="server_key.pem"
 CLIENT_CSR="server_csr.pem"
 CLIENT_CERT="server_cert.pem"
-CA_KEY="ca.key"
-CA_CERT="ca.crt"
+CA_KEY="ca_key.pem"
+CA_CERT="ca_cert.pem"
 
 # Generate server private key using Dilithium-5 algorithm
 openssl genpkey -algorithm dilithium3 -out "$CLIENT_KEY"
