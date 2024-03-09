@@ -9,7 +9,7 @@ CA_KEY="ca.key"
 CA_CERT="ca.crt"
 
 # Generate server private key using Dilithium-5 algorithm
-openssl genpkey -algorithm dilithium5 -out "$CLIENT_KEY"
+openssl genpkey -algorithm dilithium3 -out "$CLIENT_KEY"
 
 # Generate server certificate signing request (CSR)
 openssl req -new -key "$CLIENT_KEY" -out "$CLIENT_CSR"
