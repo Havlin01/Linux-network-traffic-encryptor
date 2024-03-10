@@ -36,7 +36,7 @@
 #include <openssl/x509.h>
 #include <openssl/pem.h>
 #include <openssl/evp.h>
-#include <qs_provider.h>
+#include <openssl/bio.h>
 
 #define PORT 62000
 #define KEYPORT 61000
@@ -107,144 +107,109 @@ string kyber_cipher_data_str;
 string qkd_parameter;
 int counter = 0;
 
-bool load_certificate_chain(SSL_CTX *ctx, const char *cert_file, const char *key_file)
-{
-    if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
-    {
-        ERR_print_errors_fp(stderr);
-        return false;
-    }
-    if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0)
-    {
-        ERR_print_errors_fp(stderr);
-        return false;
-    }
-    return true;
-}
 
+int create_socket(int port) {
+    int s;
+    struct sockaddr_in addr;
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) {
+        std::cerr << "Unable to create socket" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        std::cerr << "Unable to bind" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    if (listen(s, 1) < 0) {
+        std::cerr << "Unable to listen" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    return s;
+}
 void cert_authenticate()
 {
-    OQS_init();
-
-    int server_sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_sockfd == -1)
-    {
-        std::cerr << "Socket creation failed." << std::endl;
-        exit(EXIT_FAILURE);
-    }
-
-    // Prepare server address
-    struct sockaddr_in server_addr;
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(433);
-    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    // Bind the socket
-    if (bind(server_sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1)
-    {
-        std::cerr << "Binding failed." << std::endl;
-        close(server_sockfd);
-        exit(EXIT_FAILURE);
-    }
-
-    // Listen for connections
-    if (listen(server_sockfd, 5) == -1)
-    {
-        std::cerr << "Listening failed." << std::endl;
-        close(server_sockfd);
-        exit(EXIT_FAILURE);
-    }
-
-    // Accept connections
-    struct sockaddr_in client_addr;
-    socklen_t client_len = sizeof(client_addr);
-    int client_sockfd = accept(server_sockfd, (struct sockaddr *)&client_addr, &client_len);
-    if (client_sockfd == -1)
-    {
-        std::cerr << "Accepting failed." << std::endl;
-        close(server_sockfd);
-        exit(EXIT_FAILURE);
-    }
-
-    // Initialize OpenSSL
-    SSL_library_init();
-    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
+    int port = 4433;
+    int sock;
+    SSL_CTX *ctx;
+    SSL_load_error_strings();
+    OpenSSL_add_ssl_algorithms();
+    ctx = SSL_CTX_new(TLS_server_method());
     if (!ctx)
     {
-        std::cerr << "SSL context creation failed." << std::endl;
-        close(client_sockfd);
-        close(server_sockfd);
+        std::cerr << "Unable to create SSL context" << std::endl;
+        ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
 
-    // Load certificate and private key
-    if (!load_certificate_chain(ctx, SERVER_CERT, SERVER_KEY))
-    {
-        std::cerr << "Loading certificate and private key failed." << std::endl;
-        close(client_sockfd);
-        close(server_sockfd);
-        SSL_CTX_free(ctx);
+    SSL_CTX_set_ecdh_auto(ctx, 1);
+
+    // Load the server's certificate
+    if (SSL_CTX_use_certificate_file(ctx, SERVER_CERT, SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
 
-    // Create SSL object
-    SSL *ssl = SSL_new(ctx);
-    if (!ssl)
-    {
-        std::cerr << "SSL creation failed." << std::endl;
-        close(client_sockfd);
-        close(server_sockfd);
-        SSL_CTX_free(ctx);
+    // Load the private key
+    if (SSL_CTX_use_PrivateKey_file(ctx, SERVER_KEY, SSL_FILETYPE_PEM) <= 0 ) {
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+     // Load CA certificate to verify client certificate
+    if (SSL_CTX_load_verify_locations(ctx, SERVER_CA_CERT, NULL) <= 0) {
+        ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
 
-    // Associate SSL object with socket
-    if (SSL_set_fd(ssl, client_sockfd) == 0)
-    {
-        std::cerr << "Failed to set SSL file descriptor." << std::endl;
-        SSL_free(ssl);
-        close(client_sockfd);
-        close(server_sockfd);
-        SSL_CTX_free(ctx);
-        exit(EXIT_FAILURE);
-    }
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 
-    // Accept SSL connection
-    if (SSL_accept(ssl) <= 0)
-    {
-        std::cerr << "SSL accept failed." << std::endl;
-        SSL_free(ssl);
-        close(client_sockfd);
-        close(server_sockfd);
-        SSL_CTX_free(ctx);
-        exit(EXIT_FAILURE);
-    }
+    // Set the verification depth to 1
+    SSL_CTX_set_verify_depth(ctx, 1);
+    sock = create_socket(port);
+    std::cout << "Server is listening on port " << port << std::endl;
 
-    // Verify client certificate
-    if (SSL_get_verify_mode(ssl) & SSL_VERIFY_PEER)
+    // Accept connections
+    while (1)
     {
-        if (SSL_get_verify_result(ssl) != X509_V_OK)
+        struct sockaddr_in addr;
+        uint len = sizeof(addr);
+        SSL *ssl;
+        const char reply[] = "Test message from server.";
+
+        int client = accept(sock, (struct sockaddr *)&addr, &len);
+        if (client < 0)
         {
-            std::cerr << "Client certificate verification failed." << std::endl;
-            SSL_shutdown(ssl);
-            SSL_free(ssl);
-            close(client_sockfd);
-            close(server_sockfd);
-            SSL_CTX_free(ctx);
+            std::cerr << "Unable to accept" << std::endl;
             exit(EXIT_FAILURE);
         }
-        std::cout << "Client certificate is valid." << std::endl;
+
+        ssl = SSL_new(ctx);
+        SSL_set_fd(ssl, client);
+
+        if (SSL_accept(ssl) <= 0)
+        {
+            ERR_print_errors_fp(stderr);
+        }
+        else
+        {
+            SSL_write(ssl, reply, strlen(reply));
+        }
+
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        close(client);
     }
 
-    // Continue with communication
-    // ...
-
-    // Close the connection
-    SSL_shutdown(ssl);
-    SSL_free(ssl);
-    close(client_sockfd);
-    close(server_sockfd);
+    close(sock);
     SSL_CTX_free(ctx);
+    cleanup_openssl();
 }
 
 string convertToString(char *a)

@@ -27,7 +27,7 @@
 #include <openssl/x509.h>
 #include <openssl/pem.h>
 #include <openssl/evp.h>
-#include <qs_provider.h>
+#include <openssl/bio.h>
 
 #define PORT 62000
 #define KEYPORT 61000
@@ -105,113 +105,72 @@ string kyber_cipher_data_str;
 string qkd_parameter;
 int counter = 0;
 
-bool verify_certificate(SSL *ssl)
-{
-    X509 *cert = SSL_get_peer_certificate(ssl);
-    if (!cert)
-    {
-        std::cerr << "Failed to get certificate from peer." << std::endl;
-        return false;
-    }
-
-    // Perform certificate verification here
-    long res = SSL_get_verify_result(ssl);
-    if (res != X509_V_OK)
-    {
-        std::cerr << "Certificate verification error: " << X509_verify_cert_error_string(res) << std::endl;
-        X509_free(cert);
-        return false;
-    }
-
-    std::cout << "Certificate verification passed." << std::endl;
-    X509_free(cert);
-    return true;
-}
-
 void cert_authenticate(const char *srv_ip)
 {
-    OQS_init();
+    SSL_CTX *ctx;
+    SSL *ssl;
+    BIO *bio;
+    int sockfd;
 
-    // Create a TCP socket
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd == -1)
+    SSL_load_error_strings();
+    ERR_load_BIO_strings();
+    OpenSSL_add_all_algorithms();
+
+    ctx = SSL_CTX_new(TLS_client_method());
+    if (ctx == NULL)
     {
-        std::cerr << "Socket creation failed." << std::endl;
+        ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
 
-    // Prepare server address
-    struct sockaddr_in server_addr;
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(SERVER_PORT);
-    inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr);
-
-    // Connect to the server
-    if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1)
+    // Load the CA certificate
+    if (!SSL_CTX_load_verify_locations(ctx, SERVER_CA_CERT, NULL))
     {
-        std::cerr << "Connection failed." << std::endl;
-        close(sockfd);
+        ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
 
-    // Initialize OpenSSL
-    SSL_library_init();
-    SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
-    if (!ctx)
-    {
-        std::cerr << "SSL context creation failed." << std::endl;
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+    SSL_CTX_set_verify_depth(ctx, 4);
 
-    // Create SSL object
-    SSL *ssl = SSL_new(ctx);
+    bio = BIO_new_ssl_connect(ctx);
+    BIO_get_ssl(bio, &ssl);
     if (!ssl)
     {
-        std::cerr << "SSL creation failed." << std::endl;
-        close(sockfd);
-        SSL_CTX_free(ctx);
+        fprintf(stderr, "Can't locate SSL pointer\n");
         exit(EXIT_FAILURE);
     }
 
-    // Associate SSL object with socket
-    if (SSL_set_fd(ssl, sockfd) == 0)
+    // Attempt to connect
+    BIO_set_conn_hostname(bio, srv_ip + ":" + std::to_string(4433));
+
+    // Verify the connection opened and perform the handshake
+    if (BIO_do_connect(bio) <= 0)
     {
-        std::cerr << "Failed to set SSL file descriptor." << std::endl;
-        SSL_free(ssl);
-        close(sockfd);
-        SSL_CTX_free(ctx);
+        fprintf(stderr, "Error connecting to server\n");
+        ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
 
-    // Establish SSL connection
-    if (SSL_connect(ssl) <= 0)
+    // Verify the certificate
+    if (SSL_get_verify_result(ssl) != X509_V_OK)
     {
-        std::cerr << "SSL connection failed." << std::endl;
-        SSL_free(ssl);
-        close(sockfd);
-        SSL_CTX_free(ctx);
-        exit(EXIT_FAILURE);
-    }
-
-    // Verify server certificate
-    if (!verify_certificate(ssl))
-    {
-        std::cerr << "Server certificate verification failed." << std::endl;
+        fprintf(stderr, "Certificate verification error: %ld\n", SSL_get_verify_result(ssl));
         SSL_shutdown(ssl);
         SSL_free(ssl);
-        close(sockfd);
-        SSL_CTX_free(ctx);
         exit(EXIT_FAILURE);
     }
+    else
+    {
+        printf("Certificate verified.\n");
+    }
 
-    std::cout << "Server certificate is valid." << std::endl;
+    // Use `ssl` for reading and writing...
 
-    // Close the connection
     SSL_shutdown(ssl);
     SSL_free(ssl);
-    close(sockfd);
     SSL_CTX_free(ctx);
+    EVP_cleanup();
 }
 
 string convertToString(char *a)
