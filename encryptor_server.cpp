@@ -157,6 +157,7 @@ void cert_authenticate()
     if (SSL_CTX_use_certificate_file(ctx, SERVER_CERT, SSL_FILETYPE_PEM) <= 0)
     {
         printf("Error while loading server certificate.\n");
+        printf("Error: %s\n", ERR_error_string(ERR_get_error(), NULL));
         exit(EXIT_FAILURE);
     }
 
