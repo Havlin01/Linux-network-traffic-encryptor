@@ -168,7 +168,7 @@ void cert_authenticate()
     }
 
     // Load the CA certificate
-    if (SSL_CTX_load_verify_locations(ctx, CLIENT_CA_CERT, NULL) != 1)
+    if (SSL_CTX_load_verify_locations(ctx, SERVER_CA_CERT, NULL) != 1)
     {
         printf("Error loading a client CA certificate.\n");
         exit(EXIT_FAILURE);
