@@ -107,71 +107,83 @@ int counter = 0;
 
 void cert_authenticate(const char *srv_ip)
 {
-    SSL_CTX *ctx;
+   SSL_CTX *ctx;
     SSL *ssl;
     BIO *bio;
-    int sockfd;
 
-    SSL_load_error_strings();
-    //ERR_load_BIO_strings();
+    // Initialize OpenSSL
+    SSL_library_init();
     OpenSSL_add_all_algorithms();
+    SSL_load_error_strings();
 
-    ctx = SSL_CTX_new(TLS_client_method());
+    // Create SSL context
+    ctx = SSL_CTX_new(SSLv23_client_method());
     if (ctx == NULL)
     {
-        ERR_print_errors_fp(stderr);
+        printf("Error while creating context.\n");
         exit(EXIT_FAILURE);
     }
 
-    // Load the CA certificate
-    if (!SSL_CTX_load_verify_locations(ctx, SERVER_CA_CERT, NULL))
+    // Configure SSL context to use the certificate of the CA
+    if (SSL_CTX_load_verify_locations(ctx, SERVER_CA_CERT, NULL) != 1)
     {
-        ERR_print_errors_fp(stderr);
+        printf("Error while loading a server CA certificate.\n");
         exit(EXIT_FAILURE);
     }
 
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-    SSL_CTX_set_verify_depth(ctx, 4);
+    // Loading client certificate and private key
+    if (SSL_CTX_use_certificate_file(ctx, CLIENT_CERT, SSL_FILETYPE_PEM) != 1)
+    {
+        printf("Error loading client certificate.\n");
+        exit(EXIT_FAILURE);
+    }
+    if (SSL_CTX_use_PrivateKey_file(ctx, CLIENT_KEY, SSL_FILETYPE_PEM) != 1)
+    {
+        printf("Error while loading private key of client.\n");
+        exit(EXIT_FAILURE);
+    }
 
+    // Create SSL connection
+    ssl = SSL_new(ctx);
+    if (ssl == NULL)
+    {
+        printf("Error while creating SSL connection.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Create BIO object
     bio = BIO_new_ssl_connect(ctx);
-    BIO_get_ssl(bio, &ssl);
-    if (!ssl)
+    if (bio == NULL)
     {
-        fprintf(stderr, "Can't locate SSL pointer\n");
+        printf("Error while creating BIO object.\n");
         exit(EXIT_FAILURE);
     }
 
-    // Attempt to connect
-    srv_ip = (srv_ip, ":4433");
-    BIO_set_conn_hostname(bio, srv_ip);
+    string hostname = srv_ip + string(":") + string("443");
+    // Set hostname
+    BIO_set_conn_hostname(bio, hostname.c_str());
 
-    // Verify the connection opened and perform the handshake
+    // Connect BIO object to SSL
+    BIO_get_ssl(bio, &ssl);
+    SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
+
+    // Open connection
     if (BIO_do_connect(bio) <= 0)
     {
-        fprintf(stderr, "Error connecting to server\n");
-        ERR_print_errors_fp(stderr);
+        printf("Connection error.\n");
         exit(EXIT_FAILURE);
     }
 
-    // Verify the certificate
+    // Validate server certificate
     if (SSL_get_verify_result(ssl) != X509_V_OK)
     {
-        fprintf(stderr, "Certificate verification error: %ld\n", SSL_get_verify_result(ssl));
-        SSL_shutdown(ssl);
-        SSL_free(ssl);
+        printf("Error while verifying the certificate.\n");
         exit(EXIT_FAILURE);
     }
-    else
-    {
-        printf("Certificate verified.\n");
-    }
 
-    // Use `ssl` for reading and writing...
 
-    SSL_shutdown(ssl);
-    SSL_free(ssl);
+    BIO_free_all(bio);
     SSL_CTX_free(ctx);
-    EVP_cleanup();
 }
 
 string convertToString(char *a)
