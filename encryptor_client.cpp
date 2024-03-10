@@ -113,7 +113,7 @@ void cert_authenticate(const char *srv_ip)
     int sockfd;
 
     SSL_load_error_strings();
-    ERR_load_BIO_strings();
+    //ERR_load_BIO_strings();
     OpenSSL_add_all_algorithms();
 
     ctx = SSL_CTX_new(TLS_client_method());
@@ -142,7 +142,7 @@ void cert_authenticate(const char *srv_ip)
     }
 
     // Attempt to connect
-    BIO_set_conn_hostname(bio, srv_ip + ":" + std::to_string(4433));
+    BIO_set_conn_hostname(bio, srv_ip + ":4433" );
 
     // Verify the connection opened and perform the handshake
     if (BIO_do_connect(bio) <= 0)

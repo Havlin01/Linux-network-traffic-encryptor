@@ -209,7 +209,7 @@ void cert_authenticate()
 
     close(sock);
     SSL_CTX_free(ctx);
-    cleanup_openssl();
+    EVP_cleanup();
 }
 
 string convertToString(char *a)
