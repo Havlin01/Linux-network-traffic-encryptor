@@ -142,7 +142,7 @@ void cert_authenticate(const char *srv_ip)
     }
 
     // Attempt to connect
-    BIO_set_conn_hostname(bio, srv_ip + ":4433" );
+    BIO_set_conn_hostname(bio, std::to_string(srv_ip) + ":4433" );
 
     // Verify the connection opened and perform the handshake
     if (BIO_do_connect(bio) <= 0)
