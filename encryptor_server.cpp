@@ -136,84 +136,109 @@ int create_socket(int port) {
 }
 void cert_authenticate()
 {
-    int port = 4433;
-    int sock;
-    SSL_CTX *ctx;
+   SSL_CTX *ctx;
+    SSL *ssl;
+    BIO *acc, *client;
+
+    // Initialize OpenSSL
     SSL_library_init();
+    OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
-    OpenSSL_add_ssl_algorithms();
+
+    // Create a new SSL context
     ctx = SSL_CTX_new(SSLv23_server_method());
-    if (!ctx)
+    if (ctx == NULL)
     {
-        std::cerr << "Unable to create SSL context" << std::endl;
-        ERR_print_errors_fp(stderr);
+        printf("Error while creating context\n");
         exit(EXIT_FAILURE);
     }
 
-    SSL_CTX_set_ecdh_auto(ctx, 1);
-
-    // Load the server's certificate
-    if (SSL_CTX_use_certificate_file(ctx, SERVER_CERT, SSL_FILETYPE_PEM) <= 0) {
-        std::cerr << "Unable to load server certificate" << std::endl;
-        ERR_print_errors_fp(stderr);
+    // Set the local certificate from CertFile
+    if (SSL_CTX_use_certificate_file(ctx, SERVER_CERT, SSL_FILETYPE_PEM) <= 0)
+    {
+        printf("Error while loading server certificate.\n");
         exit(EXIT_FAILURE);
     }
 
     // Load the private key
-    if (SSL_CTX_use_PrivateKey_file(ctx, SERVER_KEY, SSL_FILETYPE_PEM) <= 0 ) {
-        std::cerr << "Unable to load private key" << std::endl;
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-     // Load CA certificate to verify client certificate
-    if (SSL_CTX_load_verify_locations(ctx, SERVER_CA_CERT, NULL) <= 0) {
-        std::cerr << "Unable to set CA location" << std::endl;
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
-
-    // Set the verification depth to 1
-    SSL_CTX_set_verify_depth(ctx, 1);
-    sock = create_socket(port);
-    std::cout << "Server is listening on port " << port << std::endl;
-
-    // Accept connections
-    while (1)
+    if (SSL_CTX_use_PrivateKey_file(ctx, SERVER_KEY, SSL_FILETYPE_PEM) <= 0)
     {
-        struct sockaddr_in addr;
-        uint len = sizeof(addr);
-        SSL *ssl;
-        const char reply[] = "Test message from server.";
+        printf("Error while loading server key.\n");
+        exit(EXIT_FAILURE);
+    }
 
-        int client = accept(sock, (struct sockaddr *)&addr, &len);
-        if (client < 0)
+    // Load the CA certificate
+    if (SSL_CTX_load_verify_locations(ctx, CLIENT_CA_CERT, NULL) != 1)
+    {
+        printf("Error loading a client CA certificate.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Create BIO acceptor
+    acc = BIO_new_accept("443");
+    if (acc == NULL)
+    {
+        printf("Error creating BIO acceptor.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Add acceptor to context
+    if (BIO_do_accept(acc) <= 0)
+    {
+        printf("Error adding acceptor to context.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    
+    while (counter < 1)
+    {
+        if (BIO_do_accept(acc) <= 0)
         {
-            std::cerr << "Unable to accept" << std::endl;
+            printf("Error while receiving.\n");
             exit(EXIT_FAILURE);
         }
 
-        ssl = SSL_new(ctx);
-        SSL_set_fd(ssl, client);
+        // Acquiering client BIO
+        client = BIO_pop(acc);
+        if (client == NULL)
+        {
+            printf("Error acquiring client BIO.\n");
+            exit(EXIT_FAILURE);
+        }
 
+        // Create new SSL connection state
+        ssl = SSL_new(ctx);
+        if (ssl == NULL)
+        {
+            printf("Error while creating SSL connection.\n");
+            exit(EXIT_FAILURE);
+        }
+
+        // Connect the SSL object with the BIO
+        SSL_set_bio(ssl, client, client);
+
+        // Establish the SSL connection
         if (SSL_accept(ssl) <= 0)
         {
-            ERR_print_errors_fp(stderr);
-        }
-        else
-        {
-            SSL_write(ssl, reply, strlen(reply));
+            printf("Error when establishing SSL connection.\n");
+            exit(EXIT_FAILURE);
         }
 
+        // Veryfying the certificate
+        if (SSL_get_verify_result(ssl) != X509_V_OK)
+        {
+            printf("Error while verifying the certificate.\n");
+            exit(EXIT_FAILURE);
+        }
+
+        // Shutdown the SSL connection
         SSL_shutdown(ssl);
         SSL_free(ssl);
-        close(client);
+        counter++;
     }
 
-    close(sock);
+    BIO_free(acc);
     SSL_CTX_free(ctx);
-    EVP_cleanup();
 }
 
 string convertToString(char *a)
