@@ -153,17 +153,20 @@ void cert_authenticate()
 
     // Load the server's certificate
     if (SSL_CTX_use_certificate_file(ctx, SERVER_CERT, SSL_FILETYPE_PEM) <= 0) {
+        std::cerr << "Unable to load server certificate" << std::endl;
         ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
 
     // Load the private key
     if (SSL_CTX_use_PrivateKey_file(ctx, SERVER_KEY, SSL_FILETYPE_PEM) <= 0 ) {
+        std::cerr << "Unable to load private key" << std::endl;
         ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
      // Load CA certificate to verify client certificate
     if (SSL_CTX_load_verify_locations(ctx, SERVER_CA_CERT, NULL) <= 0) {
+        std::cerr << "Unable to set CA location" << std::endl;
         ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
