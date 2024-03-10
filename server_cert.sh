@@ -1,22 +1,12 @@
 #!/bin/sh
 
 
-# Set the paths
-SERVER_KEY="server_key.pem"
-SERVER_CSR="server_csr.pem"
-SERVER_CERT="server_cert.pem"
-CA_KEY="ca_key.pem"
-CA_CERT="ca_cert.pem"
+# Remove any existing server key, certificate, and certificate signing request
 
-rm -rf "$SERVER_KEY" "$SERVER_CSR" "$SERVER_CERT"
+rm -rf "srv.key" "srv.csr" "srv.crt"
 
-# Generate server private key using Dilithium-5 algorithm
-openssl genpkey -algorithm dilithium3 -out "$SERVER_KEY"
-
-# Generate server certificate signing request (CSR)
-openssl req -new -sha256 -key "$SERVER_KEY" -out "$SERVER_CSR"
-
-# Sign the CSR with the CA's private key to create the server certificate
-openssl x509 -req -in "$SERVER_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" -CAcreateserial -out "$SERVER_CERT" -days 365
+openssl genpkey -algorithm dilithium3 -out srv.key
+openssl req -new -newkey dilithium3 -keyout srv.key -out srv.csr 
+openssl x509 -req -in srv.csr -out srv.crt -CA ca.crt -CAkey ca.key -CAcreateserial -days 365
 
 echo "Server certificate signed successfully."

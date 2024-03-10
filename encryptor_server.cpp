@@ -43,9 +43,9 @@
 #define MAXLINE 1500
 #define TAG_SIZE 16
 
-#define SERVER_CERT "server_cert.pem" // Název souboru serverového certifikátu
-#define SERVER_KEY "server_key.pem"   // Název souboru serverového klíče
-#define SERVER_CA_CERT "ca_cert.pem"  // Cesta k certifikátu certifikační autority klienta
+#define SERVER_CERT "srv.crt" // Název souboru serverového certifikátu
+#define SERVER_KEY "srv.key"   // Název souboru serverového klíče
+#define SERVER_CA_CERT "ca.crt"  // Cesta k certifikátu certifikační autority klienta
 
 #include <iostream>
 using std::cerr;
