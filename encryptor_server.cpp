@@ -176,7 +176,7 @@ void cert_authenticate()
     }
 
     // Create BIO acceptor
-    acc = BIO_new_accept("4443");
+    acc = BIO_new_accept("443");
     if (acc == NULL)
     {
         printf("Error creating BIO acceptor.\n");
