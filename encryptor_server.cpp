@@ -146,7 +146,7 @@ void cert_authenticate()
     SSL_load_error_strings();
 
     // Create a new SSL context
-    ctx = SSL_CTX_new(TLS_server_method());
+    ctx = SSL_CTX_new(SSLv23_client_method());
     if (ctx == NULL)
     {
         printf("Error while creating context\n");
