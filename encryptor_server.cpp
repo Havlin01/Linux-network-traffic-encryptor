@@ -1,4 +1,4 @@
-#include "kyber512_kem.hpp"
+#include "kyber768_kem.hpp"
 #include <thread>
 #include <ctime>
 #include <signal.h>
@@ -526,11 +526,11 @@ int udp_connection(struct sockaddr_in *pt_servaddr, struct sockaddr_in *pt_cliad
 string get_pqckey(int new_socket)
 {
     constexpr size_t KEY_LEN = 32;
-    std::vector<uint8_t> _cipher(kyber512_kem::CIPHER_LEN, 0);
+    std::vector<uint8_t> _cipher(kyber768_kem::CIPHER_LEN, 0);
     std::vector<uint8_t> _shrd_key(KEY_LEN, 0);
     std::vector<uint8_t> _m(KEY_LEN, 0);
     auto m = std::span<uint8_t, KEY_LEN>(_m);
-    auto cipher = std::span<uint8_t, kyber512_kem::CIPHER_LEN>(_cipher);
+    auto cipher = std::span<uint8_t, kyber768_kem::CIPHER_LEN>(_cipher);
     auto shrd_key = std::span<uint8_t, KEY_LEN>(_shrd_key);
     prng::prng_t prng_pqc;
     prng_pqc.read(m);
@@ -547,11 +547,11 @@ string get_pqckey(int new_socket)
     // read pqc buffer as string
     string pqc_string = convertToString((char *)&pqc_buffer[0]);
 
-    std::vector<uint8_t> _pkey(kyber512_kem::PKEY_LEN, 0);
+    std::vector<uint8_t> _pkey(kyber768_kem::PKEY_LEN, 0);
     _pkey = pqc_buffer;
 
-    auto pkey = std::span<uint8_t, kyber512_kem::PKEY_LEN>(_pkey);
-    auto skdf = kyber512_kem::encapsulate(m, pkey, cipher);
+    auto pkey = std::span<uint8_t, kyber768_kem::PKEY_LEN>(_pkey);
+    auto skdf = kyber768_kem::encapsulate(m, pkey, cipher);
     skdf.squeeze(shrd_key);
 
     string pqc_key = kyber_utils::to_hex(shrd_key);
@@ -604,7 +604,7 @@ string PerformECDHKeyExchange(int socket)
     CryptoPP::AutoSeededRandomPool rng;
 
     // Set up the NIST P-521 curve domain
-    CryptoPP::ECDH<CryptoPP::ECP>::Domain dh(CryptoPP::ASN1::secp521r1());
+    CryptoPP::ECDH<CryptoPP::ECP>::Domain dh(CryptoPP::ASN1::sect571k1());
 
     // Generate ECDH keys
     CryptoPP::SecByteBlock privateKey(dh.PrivateKeyLength());

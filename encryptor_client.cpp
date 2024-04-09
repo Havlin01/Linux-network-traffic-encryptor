@@ -1,4 +1,4 @@
-#include <kyber512_kem.hpp>
+#include <kyber768_kem.hpp>
 #include <thread>
 #include <ctime>
 #include <chrono>
@@ -498,11 +498,11 @@ string get_pqckey(int client_fd)
     auto z = std::span<uint8_t, SEED_LEN>(_z);
 
     // Public/private keypair
-    std::vector<uint8_t> _pkey(kyber512_kem::PKEY_LEN, 0);
-    std::vector<uint8_t> _skey(kyber512_kem::SKEY_LEN, 0);
+    std::vector<uint8_t> _pkey(kyber768_kem::PKEY_LEN, 0);
+    std::vector<uint8_t> _skey(kyber768_kem::SKEY_LEN, 0);
 
-    auto pkey = std::span<uint8_t, kyber512_kem::PKEY_LEN>(_pkey);
-    auto skey = std::span<uint8_t, kyber512_kem::SKEY_LEN>(_skey);
+    auto pkey = std::span<uint8_t, kyber768_kem::PKEY_LEN>(_pkey);
+    auto skey = std::span<uint8_t, kyber768_kem::SKEY_LEN>(_skey);
 
     // Seed required for key encapsulation
     std::vector<uint8_t> _m(SEED_LEN, 0);
@@ -520,7 +520,7 @@ string get_pqckey(int client_fd)
     prng_pqc.read(z);
 
     // Generate a keypair
-    kyber512_kem::keygen(d, z, pkey, skey);
+    kyber768_kem::keygen(d, z, pkey, skey);
 
     // Fill up seed required for key encapsulation, using PRNG
     prng_pqc.read(m);
@@ -534,7 +534,7 @@ string get_pqckey(int client_fd)
     send(client_fd, pkey.data(), pkey.size(), 0);
     read(client_fd, &pqc_buffer[0], MAXLINE);
 
-    std::vector<uint8_t> _cipher(kyber512_kem::CIPHER_LEN, 0);
+    std::vector<uint8_t> _cipher(kyber768_kem::CIPHER_LEN, 0);
     _cipher = pqc_buffer;
 
     // take the first 216 bytes of the cipher text and put it in the new variable called cipher_data
@@ -542,8 +542,8 @@ string get_pqckey(int client_fd)
     kyber_cipher_data_str = kyber_utils::to_hex(cipher_data);
 
     // Decapsulate cipher text and obtain KDF
-    auto cipher = std::span<uint8_t, kyber512_kem::CIPHER_LEN>(_cipher);
-    auto rkdf = kyber512_kem::decapsulate(skey, cipher);
+    auto cipher = std::span<uint8_t, kyber768_kem::CIPHER_LEN>(_cipher);
+    auto rkdf = kyber768_kem::decapsulate(skey, cipher);
     rkdf.squeeze(shrd_key);
     string pqc_key = kyber_utils::to_hex(shrd_key);
 
@@ -570,7 +570,7 @@ string PerformECDHKeyExchange(int client_fd)
     CryptoPP::AutoSeededRandomPool rng;
 
     // Set up the NIST P-521 curve domain
-    CryptoPP::ECDH<CryptoPP::ECP>::Domain dh(CryptoPP::ASN1::secp521r1());
+    CryptoPP::ECDH<CryptoPP::ECP>::Domain dh(CryptoPP::ASN1::sect571k1());
     // Generate ECDH keys
     CryptoPP::SecByteBlock privateKey(dh.PrivateKeyLength());
     CryptoPP::SecByteBlock publicKey(dh.PublicKeyLength());
@@ -929,7 +929,7 @@ int main(int argc, char *argv[])
     }
     //******** CLIENT MODE: ********//
 
-      try
+    /*   try
     {
         cert_authenticate(srv_ip);
     }
@@ -938,7 +938,7 @@ int main(int argc, char *argv[])
         std::cerr << "Certification authentication failed" << '\n';
     }
 
-    cout << "Certification authentication successful" << endl;
+    cout << "Certification authentication successful" << endl; */
 
     // Virtual interface access
     int tundesc;
