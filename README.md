@@ -10,12 +10,17 @@ Example application:
 
 ![schema](https://github.com/gabsssq/Linux-network-traffic-encryptor/assets/85123006/f8c1ad3a-0396-4b6b-bf97-12bd5adbb919)
 
+## Modes of operation
+Encryptor can run in two modes, depending on the infrastructure. First mode is without QKD servers (or simulators). Second is with QKD servers.
+Mode of operation is selected by number of arguments entered when starting the encryptor (see Usage).
+
 ## Encryption
 Traffic is encrypted on virtual interface using algorithm AES-256 GCM (Used implementation: https://www.cryptopp.com/release870.html).
-Key for AES is derived from QKD and PQC keys.
+Key for AES is derived from QKD, ECDH and PQC keys.
 
 QKD key can be obtained from REST API of real QKD system or attached simulator.
 PQC key is established using algorithm Kyber-512 (Used implementation: https://github.com/itzmeanjan/kyber/tree/master).
+ECDH key is established using NIST P-521 curve. (Curve characteristics available at: https://neuromancer.sk/std/nist/P-521)
 
 Encrypted/unencrypted traffic is distinguished by UDP port - encrypted traffic is sent to port 62 000.
 Network traffic is encrypted on packet-by-packet basis in tunnel mode - this means, that every packet is expanded by 60 bytes (16 B nonce, 16 B MAC tag, 20 B new IPv4 address, 8 B UDP header).
@@ -24,11 +29,24 @@ Network traffic is encrypted on packet-by-packet basis in tunnel mode - this mea
 ![encrpacketstructure](https://github.com/gabsssq/Linux-network-traffic-encryptor/assets/85123006/90284fa1-a6f5-4fd8-8721-23079a0f3c03)
 
 ## Rekey
-Encryptor performs rekey every 200 000 encrypted messages. Encryptor obtains new QKD key and calculate hybrid key. PQC key stays the same.
+Encryptor performs rekey every 1 hour. Encryptor obtains new QKD key (if available), PQC key and ECDH key. Then derives new hybrid key.
 Rekeying process can be seen below:
 ![rekey](https://github.com/gabsssq/Linux-network-traffic-encryptor/assets/85123006/9e6fb0b2-9698-41ab-8a97-90681583875b)
 
 Encryptor uses TCP port 61 000 for keyID exchange. Due to key change some packets fail integrity check.
+
+## Certificate authentication
+Encryptor can authenticate the connecting gateways using certificates. You can use the scripts included in project to generate one.
+The certificates must be with .crt extension. For proper functioning, obtaining of certificate of certification authority and certificate of the destination gateway is needed. 
+The authentication take place automatically on start of encryptor.
+
+## Pre-requisites
+To be able to run the encryptor, libssl-dev and ca-certificates needs to be installed. If you run in the problems with certificate authentication,
+maybe adding the CA certificate into the truststore can solve the issue.
+```bash
+sudo cp [certificatename].crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+```
 
 ## Encryptor installation
 Installation script install.sh can be used for installation on Debian and Debian-based Linux distributions.
@@ -53,12 +71,12 @@ chmod +x install_QKD.sh
 Encryptor is divided into 2 parts - server and client.
 ##### 1st Gateway (server):
 ```bash
-./encryptor_server [local IP address of QKD system]
+./encryptor_server [local IP address of QKD system] (optional)
 ```
 
 ##### 2nd Gateway (client):
 ```bash
-./encryptor_client [local IP address of QKD system] [IP address of server gateway]
+./encryptor_client [local IP address of QKD system] [IP address of server gateway] (optional)
 ```
 
 ### Endpoints:
