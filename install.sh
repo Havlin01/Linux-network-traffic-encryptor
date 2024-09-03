@@ -25,10 +25,15 @@ git clone https://github.com/gabsssq/kyber.git
 (cd kyber && git submodule update --init)
 
 # Install AES library
-wget https://www.cryptopp.com/cryptopp870.zip
-unzip -aoq cryptopp870.zip -d cryptopp
-(cd cryptopp && sudo make)
-(cd cryptopp && sudo make install)
+#check if cryptopp is already installed, if yes, skip the installation
+if [ -d "cryptopp" ]; then
+    echo "cryptopp is already installed"
+else
+    wget https://github.com/weidai11/cryptopp/releases/download/CRYPTOPP_8_7_0/cryptopp870.zip
+   unzip -aoq cryptopp870.zip -d cryptopp
+   (cd cryptopp && sudo make)
+   (cd cryptopp && sudo make install)
+fi
 
 # Install OpenSSL library
 sudo apt install openssl -y
