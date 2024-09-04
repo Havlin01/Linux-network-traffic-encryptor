@@ -32,3 +32,6 @@
 *.app
 
 *.jfm
+# Libraries
+liboqs/
+oqs-provider/
