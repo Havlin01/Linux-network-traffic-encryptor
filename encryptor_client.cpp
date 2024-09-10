@@ -481,7 +481,6 @@ bool E_N_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
     int order = get_order();
 
     string encrypted_data = encrypt_data(key, data, prng, &e);
-    cout << "encrypted data: " << encrypted_data << endl;
     while (order != send_order)
     {
 
