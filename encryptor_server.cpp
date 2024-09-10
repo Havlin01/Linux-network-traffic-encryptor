@@ -332,15 +332,15 @@ int tun_open()
 }
 
 // Encrypted data recieve
-string data_recieve(int sockfd, struct sockaddr_in servaddr)
+string data_recieve(int sockfd, struct sockaddr_in cliaddr)
 {
 
-    socklen_t len;
+    socklen_t len = sizeof(cliaddr);
     char buffer[MAXLINE] = {0};
     int n;
 
     n = recvfrom(sockfd, (char *)buffer, MAXLINE,
-                 MSG_WAITALL, (struct sockaddr *)&servaddr,
+                 MSG_WAITALL, (struct sockaddr *)&cliaddr,
                  &len);
 
     if (n == -1)
@@ -352,6 +352,7 @@ string data_recieve(int sockfd, struct sockaddr_in servaddr)
 
     return recieved;
 }
+
 
 // Virtual interface data read
 string read_tun(int tundesc)
@@ -1138,7 +1139,7 @@ int main(int argc, char *argv[])
                 if (threads_available > 0)
                 {
                     threads_available -= 1;
-                    std::thread(thread_encrypt, sockfd, servaddr, cliaddr, &key_encrypt, tundesc, &threads_available, &prng, e).detach();
+                     std::thread(thread_encrypt, sockfd, cliaddr, &key_encrypt, &key_decrypt, tundesc, &threads_available, &prng, e).detach();
                 }
             }
 
