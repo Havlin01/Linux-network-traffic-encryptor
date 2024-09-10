@@ -110,28 +110,15 @@ std::mutex m2;
 /*
    Get encryption order after reading from tun interface
 */
-
-int enc_get_order()
+int get_order()
 {
     m1.lock();
-    enc_read_order = (enc_read_order % 100000) + 1;
-    int order = enc_read_order;
+    read_order = (read_order % 100000) + 1;
+    int order = read_order;
     m1.unlock();
     return order;
 }
 
-/*
-   Get decription order after reading from socket
-*/
-
-int dec_get_order()
-{
-    m2.lock();
-    dec_read_order = (dec_read_order % 100000) + 1;
-    int order = enc_read_order;
-    m2.unlock();
-    return order;
-}
 
 void cert_authenticate_online(const char *srv_ip)
 {
@@ -448,34 +435,36 @@ bool D_E_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
 {
     string data;
     string encrypted_data = data_recieve(sockfd, servaddr);
-    if (encrypted_data.length() == 0)
+// Encrypted data should be at least 33 char long (16B nonce, 16B auth tag)
+    if (encrypted_data.length() < 33)
     {
         return false;
     }
-    int order = enc_get_order();
-    //    cout << "\n dec order:" << order << endl;
+
+    int order = get_order();
+
     try
     {
         data = decrypt_data(key, encrypted_data);
     }
     catch (...)
     {
-        while (order != enc_send_order)
+        while (order != send_order)
         {
-            //            std::this_thread::sleep_for(std::chrono::nanoseconds(1));
+
         }
-        enc_send_order = (enc_send_order % 100000) + 1;
+        send_order = (send_order % 100000) +1;
         return true;
     }
-
-    while (order != enc_send_order)
+    while (order != send_order)
     {
-        //        std::this_thread::sleep_for(std::chrono::nanoseconds(1));
+
     }
     write_tun(tundesc, data);
-    enc_send_order = (enc_send_order % 100000) + 1;
+    send_order = (send_order % 100000) +1;
     return true;
 }
+
 
 /*
    Aggregation of functions needed for encryption and data send:
@@ -486,38 +475,38 @@ bool D_E_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
    Returns false if there are no more data available on virtual interface.
 */
 
-bool E_N_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tundesc, socklen_t len, AutoSeededRandomPool *prng, GCM<AES, CryptoPP::GCM_64K_Tables>::Encryption e)
+bool E_N_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tundesc, AutoSeededRandomPool *prng, GCM<AES, CryptoPP::GCM_64K_Tables>::Encryption e)
 {
     string data = read_tun(tundesc);
-
     if (data.length() == 0)
     {
         return false;
     }
-    int order = enc_get_order();
-    //    cout << "\n enc order:" << order << endl;
+
+    int order = get_order();
+
     string encrypted_data = encrypt_data(key, data, prng, &e);
-    while (order != enc_send_order)
+
+    while (order != send_order)
     {
-        //        std::this_thread::sleep_for(std::chrono::nanoseconds(1));
+
     }
 
-    send_encrypted(sockfd, servaddr, encrypted_data, len);
-    cout << "\n enc send order:" << enc_send_order << endl;
-    enc_send_order = (enc_send_order % 100000) + 1;
+    send_encrypted(sockfd, servaddr, encrypted_data);
+    send_order = (send_order % 100000) + 1;
     return true;
 }
 
 // Thread function for both encryption and decryption
-void thread_encrypt(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tundesc, socklen_t len, std::atomic<int> *threads, AutoSeededRandomPool *prng, GCM<AES, CryptoPP::GCM_64K_Tables>::Encryption e)
+void thread_encrypt(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key_encrypt, SecByteBlock *key_decrypt, int tundesc, std::atomic<int> *threads, AutoSeededRandomPool *prng, GCM<AES, CryptoPP::GCM_64K_Tables>::Encryption e)
 {
     for (int i = 0; i < 100; i++)
     {
-        while (E_N_C_R(sockfd, servaddr, key, tundesc, len, prng, e))
+        while (E_N_C_R(sockfd, servaddr, key_encrypt, tundesc, prng, e))
         {
         }
 
-        while (D_E_C_R(sockfd, servaddr, key, tundesc))
+        while (D_E_C_R(sockfd, servaddr, key_decrypt, tundesc))
         {
         }
     }
