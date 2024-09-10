@@ -479,6 +479,7 @@ bool D_E_C_R(int sockfd, struct sockaddr_in cliaddr, SecByteBlock *key, int tund
     }
     write_tun(tundesc, data);
     send_order = (send_order % 100000) +1;
+    cout << "Decrypted packet number:" << send_order.load() << endl;
     return true;
 }
 
