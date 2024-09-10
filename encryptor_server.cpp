@@ -479,7 +479,6 @@ bool D_E_C_R(int sockfd, struct sockaddr_in cliaddr, SecByteBlock *key, int tund
     {
 
     }
-    cout << "Decrypted packet number:" << order << endl;
     write_tun(tundesc, data);
     send_order = (send_order % 100000) +1;
     return true;
@@ -512,7 +511,6 @@ bool E_N_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
     }
     send_encrypted(sockfd, servaddr, encrypted_data);
     send_order = (send_order % 100000) +1;
-    cout << "Encrypted packet number:" << send_order << endl;
     return true;
 }
 
@@ -1131,7 +1129,7 @@ int main(int argc, char *argv[])
                 // set socket to non-blocking mode
                 // Set TCP socket to NON-blocking mode
             }
-                fcntl(new_socket, F_SETFL, O_NONBLOCK);
+            fcntl(new_socket, F_SETFL, O_NONBLOCK);
             // fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFL, 0) & ~O_NONBLOCK);
             // Create runnable thread if there are data available either on tun interface or UDP socket
             if (E_N_C_R(sockfd, cliaddr, &key_encrypt, tundesc, &prng, e) || D_E_C_R(sockfd, cliaddr, &key_decrypt, tundesc))
@@ -1139,7 +1137,7 @@ int main(int argc, char *argv[])
                 if (threads_available > 0)
                 {
                     threads_available -= 1;
-                     std::thread(thread_encrypt, sockfd, cliaddr, &key_encrypt, &key_decrypt, tundesc, &threads_available, &prng, e).detach();
+                    std::thread(thread_encrypt, sockfd, cliaddr, &key_encrypt, &key_decrypt, tundesc, &threads_available, &prng, e).detach();
                 }
             }
 

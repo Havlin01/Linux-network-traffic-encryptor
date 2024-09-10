@@ -456,7 +456,6 @@ bool D_E_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
     {
 
     }
-    cout << "Decrypted packet number:" << order << endl;
     write_tun(tundesc, data);
     send_order = (send_order % 100000) +1;
     return true;
@@ -488,9 +487,9 @@ bool E_N_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
     {
 
     }
-    cout << "Encrypted packet number:" << order << endl;
     send_encrypted(sockfd, servaddr, encrypted_data);
     send_order = (send_order % 100000) + 1;
+    std::cout << "Encrypted packet number:" << send_order.load() << std::endl;
     return true;
 }
 
