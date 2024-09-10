@@ -101,14 +101,18 @@ using CryptoPP::GCM;
 string xy_str;
 string kyber_cipher_data_str;
 string qkd_parameter;
-int counter = 0;
+std::atomic<int> counter = 0;
 
-std::atomic<int> enc_read_order = 0;
-std::atomic<int> dec_read_order = 0;
-std::atomic<int> enc_send_order = 1;
-std::atomic<int> dec_send_order = 1;
+string convertToString(char *a)
+{
+    string s = a;
+    return s;
+}
+
+
+std::atomic<int> read_order = 0;
+std::atomic<int> send_order = 1;
 std::mutex m1;
-std::mutex m2;
 
 int get_order()
 {
@@ -381,12 +385,12 @@ void write_tun(int tundesc, string message)
 }
 
 // Send encrypted data
-void send_encrypted(int sockfd, struct sockaddr_in servaddr, string cipher, socklen_t len)
+void send_encrypted(int sockfd, struct sockaddr_in servaddr, string cipher)
 {
-
     char *cp = &cipher[0];
-    sendto(sockfd, cp, cipher.length(), MSG_CONFIRM, (const struct sockaddr *)&servaddr, len);
+    sendto(sockfd, cp, cipher.length(), MSG_CONFIRM, (const struct sockaddr *)&servaddr, sizeof(servaddr));
 }
+
 
 // Data encryption
 string encrypt_data(SecByteBlock *key, string message, AutoSeededRandomPool *prng, GCM<AES, CryptoPP::GCM_64K_Tables>::Encryption *e)
