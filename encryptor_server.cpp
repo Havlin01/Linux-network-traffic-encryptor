@@ -1081,7 +1081,7 @@ int main(int argc, char *argv[])
         // string pqc_key = get_pqckey(new_socket);
 
         // UDP connection create
-         int sockfd = udp_connection(&servaddr, &cliaddr,);
+         int sockfd = udp_connection(&servaddr, &cliaddr);
 
         char bufferTCP[MAXLINE] = {0};
 
