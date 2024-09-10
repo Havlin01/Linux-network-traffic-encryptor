@@ -103,11 +103,6 @@ string kyber_cipher_data_str;
 string qkd_parameter;
 std::atomic<int> counter = 0;
 
-string convertToString(char *a)
-{
-    string s = a;
-    return s;
-}
 
 
 std::atomic<int> read_order = 0;
