@@ -324,6 +324,7 @@ string data_recieve(int sockfd, struct sockaddr_in servaddr)
 
     if (n == -1)
     {
+        perror("Error while recieving data");
         return "";
     }
 

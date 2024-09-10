@@ -344,7 +344,8 @@ string data_recieve(int sockfd, struct sockaddr_in cliaddr)
                  &len);
 
     if (n == -1)
-    {
+    {   
+        perror("Error while receiving data");
         return "";
     }
 
