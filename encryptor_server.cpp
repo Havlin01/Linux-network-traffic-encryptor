@@ -1138,7 +1138,7 @@ int main(int argc, char *argv[])
                 if (threads_available > 0)
                 {
                     threads_available -= 1;
-                    std::thread(thread_encrypt, &sockfd, servaddr, cliaddr, &key_encrypt, tundesc, &threads_available, &prng, e).detach();
+                    std::thread(thread_encrypt, sockfd, servaddr, cliaddr, &key_encrypt, tundesc, &threads_available, &prng, e).detach();
                 }
             }
 
