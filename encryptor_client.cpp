@@ -1083,11 +1083,12 @@ int main(int argc, char *argv[])
     tundesc = tun_open();
 
     // Variables for UDP connection
-    socklen_t len;
     struct sockaddr_in servaddr;
 
     // AES key variable creation
-    SecByteBlock key(AES::MAX_KEYLENGTH);
+    SecByteBlock key(AES::MAX_KEYLENGTH*2);
+    SecByteBlock key_encrypt(AES::MAX_KEYLENGTH);
+    SecByteBlock key_decrypt(AES::MAX_KEYLENGTH);
 
     // Get count of runnable threads (excluding main thread)
     int threads_max = std::thread::hardware_concurrency() - 1;
@@ -1125,10 +1126,10 @@ int main(int argc, char *argv[])
         //   close(client_fd);
 
         // Create UDP connection
-        // int sockfd = tcp_connection(srv_ip);
+        int sockfd = udp_connection(&servaddr, srv_ip);
         // TCP error propagation
 
-        cout << "TCP2 connection established" << endl;
+        cout << "UDP connection established" << endl;
 
         // Set TCP socket to non-blocking state
 
@@ -1144,6 +1145,8 @@ int main(int argc, char *argv[])
             }
 
             key = rekey_cli(client_fd, qkd_ip, srv_ip, bufferTCP_str);
+            memcpy (key_decrypt, Tempkey, AES::MAX_KEYLENGTH);
+            memcpy (key_encrypt, Tempkey + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
             ref = time(NULL);
             fcntl(client_fd, F_SETFL, O_NONBLOCK);
 
@@ -1168,12 +1171,12 @@ int main(int argc, char *argv[])
                     }
 
                     // Create runnable thread if there are data available either on tun interface or UDP socket
-                    if (E_N_C_R(client_fd, servaddr, &key, tundesc, len, &prng, e) || D_E_C_R(client_fd, servaddr, &key, tundesc))
+                    if (E_N_C_R(sockfd, servaddr, &key_encrypt, tundesc, &prng, e) || D_E_C_R(sockfd, servaddr, &key_decrypt, tundesc))
                     {
                         if (threads_available > 0)
                         {
                             threads_available -= 1;
-                            std::thread(thread_encrypt, client_fd, servaddr, &key, tundesc, len, &threads_available, &prng, e).detach();
+                            std::thread(thread_encrypt, sockfd, servaddr, &key_encrypt, &key_decrypt, tundesc, &threads_available, &prng, e).detach();
                         }
                     }
 
@@ -1186,11 +1189,11 @@ int main(int argc, char *argv[])
                     // Help with encryption/decryption if all runnable threads are created
                     if (threads_available == 0)
                     {
-                        while (E_N_C_R(client_fd, servaddr, &key, tundesc, len, &prng, e))
+                        while (E_N_C_R(sockfd, servaddr, &key_encrypt, tundesc, &prng, e))
                         {
                         }
 
-                        while (D_E_C_R(client_fd, servaddr, &key, tundesc))
+                        while (D_E_C_R(client_fd, servaddr, &key_decrypt, tundesc))
                         {
                         }
                     }
@@ -1205,6 +1208,6 @@ int main(int argc, char *argv[])
         }
         // Clean sockets termination
         close(client_fd);
-        // close(sockfd);
+        close(sockfd);
     }
 }

@@ -1053,12 +1053,12 @@ int main(int argc, char *argv[])
     time_t ref = time(NULL);
 
     // AES key variable creation
-    SecByteBlock key(AES::MAX_KEYLENGTH);
+    SecByteBlock key(AES::MAX_KEYLENGTH*2);
+    SecByteBlock key_encrypt(AES::MAX_KEYLENGTH);
+    SecByteBlock key_decrypt(AES::MAX_KEYLENGTH);
 
     // Variables for UDP/TCP connections
     int server_fd;
-    int server_fd_key;
-    socklen_t len;
     struct sockaddr_in servaddr, cliaddr;
 
     // Get count of runnable threads (excluding main thread)
@@ -1067,6 +1067,7 @@ int main(int argc, char *argv[])
 
     GCM<AES, CryptoPP::GCM_64K_Tables>::Encryption e;
     AutoSeededRandomPool prng;
+    string pqc_key, ecdh_key;
 
     while (1)
     {
@@ -1080,7 +1081,7 @@ int main(int argc, char *argv[])
         // string pqc_key = get_pqckey(new_socket);
 
         // UDP connection create
-        // int sockfd = tcp_connection(&server_fd_key);
+         int sockfd = udp_connection(&servaddr, &cliaddr,);
 
         char bufferTCP[MAXLINE] = {0};
 
@@ -1100,6 +1101,8 @@ int main(int argc, char *argv[])
         // set socket to blocking mode
         fcntl(new_socket, F_SETFL, fcntl(new_socket, F_GETFL, 0) & ~O_NONBLOCK);
         key = rekey_srv(new_socket, qkd_ip);
+        memcpy(key_encrypt, key, AES::MAX_KEYLENGTH);
+        memcpy(key_decrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
         fcntl(new_socket, F_SETFL, O_NONBLOCK);
         status = -1;
 
@@ -1119,7 +1122,7 @@ int main(int argc, char *argv[])
             */
 
             // Get TCP connection status
-            status = read(new_socket, bufferTCP, MAXLINE);
+                status = read(new_socket, bufferTCP, MAXLINE);
             // Establish new hybrid key, if key_ID is recieved
             //cout << status << endl;
             if (status > 0)
@@ -1133,18 +1136,20 @@ int main(int argc, char *argv[])
                     get_qkdkey(qkd_ip, bufferTCP);
                 }
                 key = rekey_srv(new_socket, qkd_ip);
+                memcpy(key_encrypt, key, AES::MAX_KEYLENGTH);
+                memcpy(key_decrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
                 // set socket to non-blocking mode
                 // Set TCP socket to NON-blocking mode
                 fcntl(new_socket, F_SETFL, O_NONBLOCK);
             }
             // fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFL, 0) & ~O_NONBLOCK);
             // Create runnable thread if there are data available either on tun interface or UDP socket
-            if (E_N_C_R(new_socket, cliaddr, &key, tundesc, len, &prng, e) || D_E_C_R(new_socket, servaddr, &key, tundesc))
+            if (E_N_C_R(sockfd, cliaddr, &key_encrypt, tundesc, &prng, e) || D_E_C_R(sockfd, cliaddr, &key_decrypt, tundesc))
             {
                 if (threads_available > 0)
                 {
                     threads_available -= 1;
-                    std::thread(thread_encrypt, new_socket, servaddr, cliaddr, &key, tundesc, len, &threads_available, &prng, e).detach();
+                    std::thread(thread_encrypt, sockfd, servaddr, cliaddr, &key_encrypt, tundesc, &threads_available, &prng, e).detach();
                 }
             }
 
@@ -1157,11 +1162,11 @@ int main(int argc, char *argv[])
             // Help with encryption/decryption if all runnable threads are created
             if (threads_available == 0)
             {
-                while (E_N_C_R(new_socket, cliaddr, &key, tundesc, len, &prng, e))
+                while (E_N_C_R(sockfd, cliaddr, &key_encrypt, tundesc, &prng, e))
                 {
                 }
 
-                while (D_E_C_R(new_socket, servaddr, &key, tundesc))
+                while (D_E_C_R(sockfd, cliaddr, &key_decrypt, tundesc))
                 {
                 }
             }
@@ -1169,12 +1174,12 @@ int main(int argc, char *argv[])
             // Send "KeepAlive" message via UDP every 60s to keep dynamic NAT translation - no need to encrypt
             if (time(NULL) - ref >= 60)
             {
-                sendto(new_socket, keepalive, strlen(keepalive), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
+                sendto(sockfd, keepalive, strlen(keepalive), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, sizeof(cliaddr));
                 ref = time(NULL);
             }
         }
         // Clean sockets termination
-        // close(sockfd);
+        close(sockfd);
         close(new_socket);
         shutdown(server_fd, SHUT_RDWR);
     }
