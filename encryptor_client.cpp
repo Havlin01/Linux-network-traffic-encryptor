@@ -328,7 +328,7 @@ string data_recieve(int sockfd, struct sockaddr_in servaddr)
         return "";
     }
 
-    string recieved(buffer, n);
+    std::string recieved(buffer, n);
 
     return recieved;
 }
