@@ -598,7 +598,7 @@ int tcp_connection(int *pt_server_fd)
 }
 
 // UDP socket creation and "Hello" messages exchange
-int udp_connection(struct sockaddr_in *pt_servaddr, struct sockaddr_in *pt_cliaddr, socklen_t *pt_len)
+int udp_connection(struct sockaddr_in *pt_servaddr, struct sockaddr_in *pt_cliaddr)
 {
     int sockfd;
     struct sockaddr_in servaddr, cliaddr;
@@ -642,7 +642,6 @@ int udp_connection(struct sockaddr_in *pt_servaddr, struct sockaddr_in *pt_cliad
     fcntl(sockfd, F_SETFL, O_NONBLOCK);
     *pt_servaddr = servaddr;
     *pt_cliaddr = cliaddr;
-    *pt_len = len;
     return sockfd;
 }
 

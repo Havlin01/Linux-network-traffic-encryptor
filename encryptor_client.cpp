@@ -578,7 +578,7 @@ int tcp_connection(const char *srv_ip)
 }
 
 // UDP socket creation and "Hello" messages exchange
-int udp_connection(struct sockaddr_in *pt_servaddr, socklen_t *pt_len, const char *srv_ip)
+int udp_connection(struct sockaddr_in *pt_servaddr, const char *srv_ip)
 {
     int sockfd;
     struct sockaddr_in servaddr;
@@ -594,7 +594,7 @@ int udp_connection(struct sockaddr_in *pt_servaddr, socklen_t *pt_len, const cha
     servaddr.sin_addr.s_addr = inet_addr(srv_ip);
     servaddr.sin_port = htons(PORT);
 
-    socklen_t len;
+    socklen_t len = sizeof(servaddr);
     int n;
     const char *hello = "Hello from client UDP";
 
@@ -614,7 +614,6 @@ int udp_connection(struct sockaddr_in *pt_servaddr, socklen_t *pt_len, const cha
     fcntl(sockfd, F_SETFL, O_NONBLOCK);
 
     *pt_servaddr = servaddr;
-    *pt_len = len;
     return sockfd;
 }
 
