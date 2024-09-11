@@ -491,7 +491,7 @@ bool D_E_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
         //        std::this_thread::sleep_for(std::chrono::nanoseconds(1));
     }
     write_tun(tundesc, data);
-    cout << "\n dec send order: " << enc_send_order << endl;
+    //cout << "\n dec send order: " << enc_send_order << endl;
     enc_send_order = (enc_send_order % 100000) + 1;
     return true;
 }
@@ -521,7 +521,7 @@ bool E_N_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
         //        std::this_thread::sleep_for(std::chrono::nanoseconds(1));
     }
     send_encrypted(sockfd, servaddr, encrypted_data, len);
-    cout << "\n enc send order: " << enc_send_order << endl;
+    //cout << "\n enc send order: " << enc_send_order << endl;
     enc_send_order = (enc_send_order % 100000) + 1;
     return true;
 }
