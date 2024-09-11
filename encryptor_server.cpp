@@ -1100,7 +1100,7 @@ int main(int argc, char *argv[])
         // set socket to blocking mode
 
 
-         long totalBytesSent = 0;  // Total bytes sent
+    /*      long totalBytesSent = 0;  // Total bytes sent
     long bytesSent = 0;
     int num_iterations = 10000;  // How many times to send the buffer
 
@@ -1127,7 +1127,7 @@ int main(int argc, char *argv[])
     // Output the results
     std::cout << "Total data sent: " << totalBytesSent << " bytes" << std::endl;
     std::cout << "Time taken: " << elapsed.count() << " seconds" << std::endl;
-    std::cout << "Speed: " << speedMbps << " Mbps" << std::endl;
+    std::cout << "Speed: " << speedMbps << " Mbps" << std::endl; */
 
 
 
