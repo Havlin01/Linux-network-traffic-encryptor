@@ -38,6 +38,9 @@ fi
 # Install OpenSSL library
 sudo apt install openssl -y
 
+# Create TUN interface
+#delete the tun0 interface if it already exists
+sudo ip link delete tun0
 sudo ip tuntap add name tun0 mode tun
 sudo ip link set tun0 up
 sudo ip addr add 192.168.1.1 peer 192.168.1.2 dev tun0

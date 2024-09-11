@@ -345,11 +345,11 @@ string data_recieve(int sockfd, struct sockaddr_in cliaddr)
 
     if (n == -1)
     {   
-        perror("Error while receiving data");
+        //perror("Error while receiving data");
         return "";
     }
 
-    std::string recieved(buffer, n);
+    string recieved(buffer, n);
 
     return recieved;
 }

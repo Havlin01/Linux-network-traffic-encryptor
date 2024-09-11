@@ -324,11 +324,11 @@ string data_recieve(int sockfd, struct sockaddr_in servaddr)
 
     if (n == -1)
     {
-        perror("Error while recieving data");
+        //perror("Error while recieving data");
         return "";
     }
 
-    std::string recieved(buffer, n);
+    string recieved(buffer, n);
 
     return recieved;
 }
@@ -572,6 +572,7 @@ int udp_connection(struct sockaddr_in *pt_servaddr, const char *srv_ip)
         perror("socket creation failed");
         exit(EXIT_FAILURE);
     }
+
     memset(&servaddr, 0, sizeof(servaddr));
     servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = inet_addr(srv_ip);
