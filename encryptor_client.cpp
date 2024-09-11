@@ -1150,7 +1150,7 @@ int main(int argc, char *argv[])
             cout << "New key established" << endl;
 
             // Trigger Rekey after some period of time (10 min)
-            while (time(NULL) - ref <= 3600)
+            while (true)
             {
                 try
                 {
