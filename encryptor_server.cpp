@@ -110,7 +110,7 @@ std::atomic<int> dec_send_order = 1;
 std::mutex m1;
 std::mutex m2;
 
-int enc_get_order()
+/* int enc_get_order()
 {
     m1.lock();
     enc_read_order = (enc_read_order % 100000) + 1;
@@ -119,9 +119,9 @@ int enc_get_order()
     return order;
 }
 
-/*
-   Get decription order after reading from socket
-*/
+
+  // Get decription order after reading from socket
+
 
 int dec_get_order()
 {
@@ -130,7 +130,7 @@ int dec_get_order()
     int order = enc_read_order;
     m2.unlock();
     return order;
-}
+} */
 void cert_authenticate_online()
 {
 
@@ -471,7 +471,7 @@ bool D_E_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
     {
         return false;
     }
-    int order = enc_get_order();
+    //int order = enc_get_order();
     //    cout << "\n dec order: " << order << endl;
     try
     {
@@ -479,20 +479,20 @@ bool D_E_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
     }
     catch (...)
     {
-        while (order != enc_send_order)
+       /*  while (order != enc_send_order)
         {
             //            std::this_thread::sleep_for(std::chrono::nanoseconds(1));
         }
         enc_send_order = (enc_send_order % 100000) + 1;
-        return true;
+        return true; */
     }
-    while (order != enc_send_order)
+    /* while (order != enc_send_order)
     {
         //        std::this_thread::sleep_for(std::chrono::nanoseconds(1));
-    }
+    } */
     write_tun(tundesc, data);
     //cout << "\n dec send order: " << enc_send_order << endl;
-    enc_send_order = (enc_send_order % 100000) + 1;
+    //enc_send_order = (enc_send_order % 100000) + 1;
     return true;
 }
 
@@ -513,16 +513,16 @@ bool E_N_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
     {
         return false;
     }
-    int order = enc_get_order();
+    //int order = enc_get_order();
     //    cout << "\n enc order: " << order << endl;
     string encrypted_data = encrypt_data(key, data, prng, &e);
-    while (order != enc_send_order)
+   /*  while (order != enc_send_order)
     {
         //        std::this_thread::sleep_for(std::chrono::nanoseconds(1));
-    }
+    } */
     send_encrypted(sockfd, servaddr, encrypted_data, len);
     //cout << "\n enc send order: " << enc_send_order << endl;
-    enc_send_order = (enc_send_order % 100000) + 1;
+    //enc_send_order = (enc_send_order % 100000) + 1;
     return true;
 }
 
