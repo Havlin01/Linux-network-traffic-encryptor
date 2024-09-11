@@ -1098,6 +1098,39 @@ int main(int argc, char *argv[])
         // get_qkdkey(qkd_ip, bufferTCP);
         // Combine PQC a QKD key into hybrid key for AES
         // set socket to blocking mode
+
+
+         long totalBytesSent = 0;  // Total bytes sent
+    long bytesSent = 0;
+    int num_iterations = 10000;  // How many times to send the buffer
+
+    // Start timing
+    auto start = std::chrono::high_resolution_clock::now();
+
+    // Sending data to the server
+    for (int i = 0; i < num_iterations; ++i) {
+        bytesSent = send(new_socket, bufferTCP, sizeof(bufferTCP), 0);
+        if (bytesSent < 0) {
+            std::cerr << "Error in sending data" << std::endl;
+            break;
+        }
+        totalBytesSent += bytesSent;
+    }
+
+    // End timing
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;  // Elapsed time in seconds
+
+    // Step 4: Calculate speed (in Mbps)
+    double speedMbps = (totalBytesSent * 8) / (elapsed.count() * 1000000.0); // Convert to Megabits
+
+    // Output the results
+    std::cout << "Total data sent: " << totalBytesSent << " bytes" << std::endl;
+    std::cout << "Time taken: " << elapsed.count() << " seconds" << std::endl;
+    std::cout << "Speed: " << speedMbps << " Mbps" << std::endl;
+
+
+
         fcntl(new_socket, F_SETFL, fcntl(new_socket, F_GETFL, 0) & ~O_NONBLOCK);
         key = rekey_srv(new_socket, qkd_ip);
         fcntl(new_socket, F_SETFL, O_NONBLOCK);
