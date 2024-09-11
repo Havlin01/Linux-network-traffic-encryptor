@@ -1100,11 +1100,6 @@ int main(int argc, char *argv[])
         // set socket to blocking mode
 
 
-
-
-
-        fcntl(new_socket, F_SETFL, fcntl(new_socket, F_GETFL, 0) & ~O_NONBLOCK);
-
          long totalBytesSent = 0;  // Total bytes sent
     long bytesSent = 0;
     int num_iterations = 10000;  // How many times to send the buffer
@@ -1134,7 +1129,9 @@ int main(int argc, char *argv[])
     std::cout << "Time taken: " << elapsed.count() << " seconds" << std::endl;
     std::cout << "Speed: " << speedMbps << " Mbps" << std::endl;
 
-    
+
+        //fcntl(new_socket, F_SETFL, fcntl(new_socket, F_GETFL, 0) & ~O_NONBLOCK);
+
         key = rekey_srv(new_socket, qkd_ip);
         fcntl(new_socket, F_SETFL, O_NONBLOCK);
         status = -1;
