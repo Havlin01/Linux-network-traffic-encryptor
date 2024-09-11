@@ -1158,14 +1158,14 @@ int main(int argc, char *argv[])
                     // cout << time(NULL) - ref << endl;
                     // fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFL, 0) & ~O_NONBLOCK);
                     //  Get TCP connection status
-                    status = read(client_fd, bufferTCP, MAXLINE);
+                    //status = read(client_fd, bufferTCP, MAXLINE);
 
                     // If TCP connection is dead, return to TCP connection creation
-                    if (status == 0)
+                   /*if (status == 0)
                     {
                         cout << "TCP connection dead" << endl;
                         break;
-                    }
+                    }*/
 
                     // Create runnable thread if there are data available either on tun interface or UDP socket
                     if (E_N_C_R(client_fd, servaddr, &key, tundesc, len, &prng, e) || D_E_C_R(client_fd, servaddr, &key, tundesc))
