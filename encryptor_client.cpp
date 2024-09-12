@@ -100,36 +100,20 @@ string xy_str;
 string kyber_cipher_data_str;
 string qkd_parameter;
 int counter = 0;
-std::atomic<int> enc_read_order = 0;
-std::atomic<int> dec_read_order = 0;
-std::atomic<int> enc_send_order = 1;
-std::atomic<int> dec_send_order = 1;
+std::atomic<int> counter = 0;
+std::atomic<int> read_order = 0;
+std::atomic<int> send_order = 1;
 std::mutex m1;
-std::mutex m2;
-
 /*
    Get encryption order after reading from tun interface
 */
 
-int enc_get_order()
+int get_order()
 {
     m1.lock();
-    enc_read_order = (enc_read_order % 100000) + 1;
-    int order = enc_read_order;
+    read_order = (read_order % 100000) + 1;
+    int order = read_order;
     m1.unlock();
-    return order;
-}
-
-
-   //Get decription order after reading from socket
-
-
-int dec_get_order()
-{
-    m2.lock();
-    dec_read_order = (dec_read_order % 100000) + 1;
-    int order = enc_read_order;
-    m2.unlock();
     return order;
 }
 
@@ -330,7 +314,7 @@ int tun_open()
 string data_recieve(int sockfd, struct sockaddr_in servaddr)
 {
 
-    socklen_t len;
+    socklen_t len = sizeof(servaddr);
     char buffer[MAXLINE] = {0};
     int n;
 
@@ -352,7 +336,7 @@ string data_recieve(int sockfd, struct sockaddr_in servaddr)
 string read_tun(int tundesc)
 {
 
-    char buf[MAXLINE - 60];
+    char buf[MAXLINE - 60] = {0};
     int nbytes = read(tundesc, buf, sizeof(buf));
     if (nbytes == -1)
     {
@@ -369,17 +353,14 @@ string read_tun(int tundesc)
 
 void write_tun(int tundesc, string message)
 {
-    char buf[MAXLINE - 60];
-    memcpy(buf, message.data(), message.length());
-    int nbytes = write(tundesc, buf, message.length());
+    write(tundesc, message.data(), message.length());
 }
 
 // Send encrypted data
-void send_encrypted(int sockfd, struct sockaddr_in servaddr, string cipher, socklen_t len)
+void send_encrypted(int sockfd, struct sockaddr_in servaddr, string cipher)
 {
-
     char *cp = &cipher[0];
-    sendto(sockfd, cp, cipher.length(), MSG_CONFIRM, (const struct sockaddr *)&servaddr, len);
+    sendto(sockfd, cp, cipher.length(), MSG_CONFIRM, (const struct sockaddr *)&servaddr, sizeof(servaddr));
 }
 
 // Data encryption
@@ -448,32 +429,33 @@ bool D_E_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
 {
     string data;
     string encrypted_data = data_recieve(sockfd, servaddr);
-    if (encrypted_data.length() == 0)
+// Encrypted data should be at least 33 char long (16B nonce, 16B auth tag)
+    if (encrypted_data.length() < 33)
     {
         return false;
     }
-    int order = enc_get_order();
-        cout << "\n dec order:" << order << endl;
+
+    int order = get_order();
+
     try
     {
         data = decrypt_data(key, encrypted_data);
     }
     catch (...)
     {
-        while (order != enc_send_order)
+        while (order != send_order)
         {
-            //            std::this_thread::sleep_for(std::chrono::nanoseconds(1));
+
         }
-        enc_send_order = (enc_send_order % 100000) + 1;
+        send_order = (send_order % 100000) +1;
         return true;
     }
-
-     while (order != enc_send_order)
+    while (order != send_order)
     {
-        //        std::this_thread::sleep_for(std::chrono::nanoseconds(1));
-    } 
+
+    }
     write_tun(tundesc, data);
-    enc_send_order = (enc_send_order % 100000) + 1;
+    send_order = (send_order % 100000) +1;
     return true;
 }
 
@@ -486,37 +468,38 @@ bool D_E_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
    Returns false if there are no more data available on virtual interface.
 */
 
-bool E_N_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tundesc, socklen_t len, AutoSeededRandomPool *prng, GCM<AES, CryptoPP::GCM_64K_Tables>::Encryption e)
+bool E_N_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tundesc, AutoSeededRandomPool *prng, GCM<AES, CryptoPP::GCM_64K_Tables>::Encryption e)
 {
     string data = read_tun(tundesc);
-
     if (data.length() == 0)
     {
         return false;
     }
-    int order = enc_get_order();
-        cout << "\n enc order:" << order << endl;
+
+    int order = get_order();
+
     string encrypted_data = encrypt_data(key, data, prng, &e);
-    while (order != enc_send_order)
+
+    while (order != send_order)
     {
-        //        std::this_thread::sleep_for(std::chrono::nanoseconds(1));
+
     }
-    send_encrypted(sockfd, servaddr, encrypted_data, len);
-    cout << "\n enc send order:" << enc_send_order << endl;
-    enc_send_order = (enc_send_order % 100000) + 1;
+
+    send_encrypted(sockfd, servaddr, encrypted_data);
+    send_order = (send_order % 100000) + 1;
     return true;
 }
 
 // Thread function for both encryption and decryption
-void thread_encrypt(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tundesc, socklen_t len, std::atomic<int> *threads, AutoSeededRandomPool *prng, GCM<AES, CryptoPP::GCM_64K_Tables>::Encryption e)
+void thread_encrypt(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key_encrypt, SecByteBlock *key_decrypt, int tundesc, std::atomic<int> *threads, AutoSeededRandomPool *prng, GCM<AES, CryptoPP::GCM_64K_Tables>::Encryption e)
 {
     for (int i = 0; i < 100; i++)
     {
-        while (E_N_C_R(sockfd, servaddr, key, tundesc, len, prng, e))
+        while (E_N_C_R(sockfd, servaddr, key_encrypt, tundesc, prng, e))
         {
         }
 
-        while (D_E_C_R(sockfd, servaddr, key, tundesc))
+        while (D_E_C_R(sockfd, servaddr, key_decrypt, tundesc))
         {
         }
     }
@@ -577,7 +560,7 @@ int tcp_connection(const char *srv_ip)
 }
 
 // UDP socket creation and "Hello" messages exchange
-int udp_connection(struct sockaddr_in *pt_servaddr, socklen_t *pt_len, const char *srv_ip)
+int udp_connection(struct sockaddr_in *pt_servaddr, const char *srv_ip)
 {
     int sockfd;
     struct sockaddr_in servaddr;
@@ -593,7 +576,7 @@ int udp_connection(struct sockaddr_in *pt_servaddr, socklen_t *pt_len, const cha
     servaddr.sin_addr.s_addr = inet_addr(srv_ip);
     servaddr.sin_port = htons(PORT);
 
-    socklen_t len;
+    socklen_t len = sizeof(servaddr);
     int n;
     const char *hello = "Hello from client UDP";
 
@@ -613,7 +596,6 @@ int udp_connection(struct sockaddr_in *pt_servaddr, socklen_t *pt_len, const cha
     fcntl(sockfd, F_SETFL, O_NONBLOCK);
 
     *pt_servaddr = servaddr;
-    *pt_len = len;
     return sockfd;
 }
 
@@ -1077,16 +1059,17 @@ int main(int argc, char *argv[])
 
     cout << "Certification authentication successful" << endl;
 
-    // Virtual interface access
+     // Virtual interface access
     int tundesc;
     tundesc = tun_open();
 
-    // Variables for UDP connection
-    socklen_t len;
+    // Variable for UDP connection
     struct sockaddr_in servaddr;
 
     // AES key variable creation
-    SecByteBlock key(AES::MAX_KEYLENGTH);
+    SecByteBlock key_encrypt(AES::MAX_KEYLENGTH);
+    SecByteBlock key_decrypt(AES::MAX_KEYLENGTH);
+    SecByteBlock key(AES::MAX_KEYLENGTH*2);
 
     // Get count of runnable threads (excluding main thread)
     int threads_max = std::thread::hardware_concurrency() - 1;
@@ -1101,6 +1084,7 @@ int main(int argc, char *argv[])
     // Time reference variable for rekey purposes
     time_t ref = time(NULL);
 
+    string pqc_key, ecdh_key;
     while (1)
     {
         int status = -1;
@@ -1123,11 +1107,11 @@ int main(int argc, char *argv[])
         // cout << "PQC key: " << pqc_key << endl;
         //   close(client_fd);
 
-        // Create UDP connection
-        // int sockfd = tcp_connection(srv_ip);
-        // TCP error propagation
+         // Create UDP connection
+        int sockfd = udp_connection(&servaddr, srv_ip);
 
-        cout << "TCP2 connection established" << endl;
+        cout << "UDP connection established" << endl;
+
 
         // Set TCP socket to non-blocking state
 
@@ -1135,75 +1119,67 @@ int main(int argc, char *argv[])
         {
             // Establish new hybrid key
             // fcntl(client_fd, F_SETFL, 0);
-            cout << "Establishing new key" << endl;
             fcntl(client_fd, F_SETFL, fcntl(client_fd, F_GETFL, 0) & ~O_NONBLOCK);
+            cout << "Establishing new key" << endl;
+
             if (argv[2] != NULL)
             {
                 bufferTCP_str = get_qkdkey(qkd_ip, client_fd);
             }
 
-            key = rekey_cli(client_fd, qkd_ip, srv_ip, bufferTCP_str);
+            key = rekey_cli(client_fd, qkd_ip, srv_ip, bufferTCP_str, pqc_key, ecdh_key);
+            memcpy (key_decrypt, key, AES::MAX_KEYLENGTH);
+            memcpy (key_encrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
+
             ref = time(NULL);
             fcntl(client_fd, F_SETFL, O_NONBLOCK);
 
             cout << "New key established" << endl;
 
+
             // Trigger Rekey after some period of time (10 min)
             while (true)
             {
-                try
+                 status = read(client_fd, bufferTCP, MAXLINE);
+
+                // If TCP connection is dead, return to TCP connection creation
+                if (status == 0)
                 {
-
-                    // cout << time(NULL) - ref << endl;
-                    // fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFL, 0) & ~O_NONBLOCK);
-                    //  Get TCP connection status
-                    //status = read(client_fd, bufferTCP, MAXLINE);
-
-                    // If TCP connection is dead, return to TCP connection creation
-                   /*if (status == 0)
-                    {
-                        cout << "TCP connection dead" << endl;
-                        break;
-                    }*/
-
-                    // Create runnable thread if there are data available either on tun interface or UDP socket
-                    if (E_N_C_R(client_fd, servaddr, &key, tundesc, len, &prng, e) || D_E_C_R(client_fd, servaddr, &key, tundesc))
-                    {
-                        if (threads_available > 0)
-                        {
-                            threads_available -= 1;
-                            std::thread(thread_encrypt, client_fd, servaddr, &key, tundesc, len, &threads_available, &prng, e).detach();
-                        }
-                    }
-
-                    // Sleep if no data are available
-                    if (threads_available == threads_max)
-                    {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                    }
-
-                    // Help with encryption/decryption if all runnable threads are created
-                    if (threads_available == 0)
-                    {
-                        while (E_N_C_R(client_fd, servaddr, &key, tundesc, len, &prng, e))
-                        {
-                        }
-
-                        while (D_E_C_R(client_fd, servaddr, &key, tundesc))
-                        {
-                        }
-                    }
-                    // fcntl(sockfd, F_SETFL, O_NONBLOCK);
+                    break;
                 }
-                catch (const std::exception &e)
+
+                // Create runnable thread if there are data available either on tun interface or UDP socket
+                if (E_N_C_R(sockfd, servaddr, &key_encrypt, tundesc, &prng, e) || D_E_C_R(sockfd, servaddr, &key_decrypt, tundesc))
                 {
-                    std::cerr << e.what() << '\n';
+                    if (threads_available > 0)
+                    {
+                        threads_available -= 1;
+                        std::thread(thread_encrypt, sockfd, servaddr, &key_encrypt, &key_decrypt, tundesc, &threads_available, &prng, e).detach();
+                    }
+                }
+
+                // Sleep if no data are available
+                if (threads_available == threads_max)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+
+                // Help with encryption/decryption if all runnable threads are created
+                if (threads_available == 0)
+                {
+                    while (E_N_C_R(sockfd, servaddr, &key_encrypt, tundesc, &prng, e))
+                    {
+                    }
+
+                    while (D_E_C_R(sockfd, servaddr, &key_decrypt, tundesc))
+                    {
+                    }
                 }
             }
             cout << "Rekeying in progress" << endl;
         }
         // Clean sockets termination
         close(client_fd);
-        // close(sockfd);
+        close(sockfd);
     }
 }
