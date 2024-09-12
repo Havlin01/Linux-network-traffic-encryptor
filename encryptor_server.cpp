@@ -308,10 +308,10 @@ void cert_authenticate_offline()
     }
 
     // Clean up
-    X509_free(serverCert);
-    X509_free(caCert);
     X509_STORE_CTX_free(ctx);
     X509_STORE_free(store);
+    X509_free(serverCert);
+    X509_free(caCert);
 }
 
 string convertToString(char *a)
