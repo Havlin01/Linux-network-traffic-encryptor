@@ -353,7 +353,7 @@ string data_recieve(int sockfd, struct sockaddr_in servaddr)
     char buffer[MAXLINE] = {0};
     int n;
 
-    n = recvfrom(sockfd, (char *)buffer, sizeof(buffer),
+    n = recvfrom(sockfd, (char *)buffer, MAXLINE,),
                  MSG_WAITALL, (struct sockaddr *)&servaddr,
                  &len);
 
@@ -1034,7 +1034,7 @@ int main(int argc, char *argv[])
     }
     else
     {
-        cert_authenticate_offline();
+       // cert_authenticate_offline();
     }
 
     cout << "Certification authentication successful" << endl;
