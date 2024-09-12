@@ -1110,7 +1110,7 @@ int main(int argc, char *argv[])
             */
 
             // Get TCP connection status
-                status = read(new_socket, bufferTCP, MAXLINE);
+                //status = read(new_socket, bufferTCP, MAXLINE);
             // Establish new hybrid key, if key_ID is recieved
             //cout << status << endl;
             if (status > 0)
