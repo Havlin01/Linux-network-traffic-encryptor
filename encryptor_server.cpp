@@ -472,7 +472,7 @@ bool D_E_C_R(int sockfd, struct sockaddr_in servaddr, SecByteBlock *key, int tun
         return false;
     }
     int order = enc_get_order();
-    //    cout << "\n dec order: " << order << endl;
+        cout << "\n dec order: " << order << endl;
     try
     {
         data = decrypt_data(key, encrypted_data);
