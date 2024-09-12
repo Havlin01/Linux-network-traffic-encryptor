@@ -1123,6 +1123,7 @@ int main(int argc, char *argv[])
         //fcntl(new_socket, F_SETFL, fcntl(new_socket, F_GETFL, 0) & ~O_NONBLOCK);
 
         key = rekey_srv(new_socket, qkd_ip);
+        cout << "Key length: " << key.size() << endl;
         memcpy(key_encrypt, key, AES::MAX_KEYLENGTH);
         memcpy(key_decrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
 
