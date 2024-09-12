@@ -99,7 +99,6 @@ using CryptoPP::GCM;
 string xy_str;
 string kyber_cipher_data_str;
 string qkd_parameter;
-int counter = 0;
 std::atomic<int> counter = 0;
 std::atomic<int> read_order = 0;
 std::atomic<int> send_order = 1;
@@ -1127,7 +1126,7 @@ int main(int argc, char *argv[])
                 bufferTCP_str = get_qkdkey(qkd_ip, client_fd);
             }
 
-            key = rekey_cli(client_fd, qkd_ip, srv_ip, bufferTCP_str, pqc_key, ecdh_key);
+            key = rekey_cli(client_fd, qkd_ip, srv_ip, bufferTCP_str);
             memcpy (key_decrypt, key, AES::MAX_KEYLENGTH);
             memcpy (key_encrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
 

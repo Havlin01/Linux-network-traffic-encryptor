@@ -670,11 +670,14 @@ string get_pqckey(int new_socket)
     return pqc_key;
 }
 
-void get_qkdkey(string qkd_ip, char bufferTCP[MAXLINE])
+void get_qkdkey(string qkd_ip, int new_socket)
 {
 
     CryptoPP::SHA3_256 hash;
     CryptoPP::SHAKE128 shake128_hash;
+
+    char bufferTCP[MAXLINE] = {0};
+    read(new_socket, bufferTCP, MAXLINE);
 
     std::ofstream myfile;
     myfile.open("keyID");
@@ -1119,7 +1122,7 @@ int main(int argc, char *argv[])
 
         //fcntl(new_socket, F_SETFL, fcntl(new_socket, F_GETFL, 0) & ~O_NONBLOCK);
 
-        key = rekey_srv(pqc_key, ecdh_key, qkd_ip);
+        key = rekey_srv(new_socket, qkd_ip);
         memcpy(key_encrypt, key, AES::MAX_KEYLENGTH);
         memcpy(key_decrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
 
@@ -1147,7 +1150,7 @@ int main(int argc, char *argv[])
             {
                 fcntl(new_socket, F_SETFL, fcntl(new_socket, F_GETFL, 0) & ~O_NONBLOCK);
 
-                key = rekey_srv(pqc_key, ecdh_key, qkd_ip);
+                key = rekey_srv(new_socket, qkd_ip);
                 memcpy(key_encrypt, key, AES::MAX_KEYLENGTH);
                 memcpy(key_decrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
                 // set socket to non-blocking mode
