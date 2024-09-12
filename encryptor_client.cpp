@@ -1128,7 +1128,7 @@ int main(int argc, char *argv[])
 
             key = rekey_cli(client_fd, qkd_ip, srv_ip, bufferTCP_str);
             memcpy (key_decrypt, key, AES::MAX_KEYLENGTH);
-            memcpy (key_encrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
+            memcpy (key_encrypt, key, AES::MAX_KEYLENGTH);
 
             ref = time(NULL);
             fcntl(client_fd, F_SETFL, O_NONBLOCK);
