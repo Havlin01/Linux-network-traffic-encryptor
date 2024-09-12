@@ -353,7 +353,7 @@ string data_recieve(int sockfd, struct sockaddr_in servaddr)
     char buffer[MAXLINE] = {0};
     int n;
 
-    n = recvfrom(sockfd, (char *)buffer, MAXLINE,
+    n = recvfrom(sockfd, (char *)buffer, sizeof(buffer),
                  MSG_WAITALL, (struct sockaddr *)&servaddr,
                  &len);
 
