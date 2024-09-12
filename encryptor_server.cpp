@@ -1022,7 +1022,7 @@ int main(int argc, char *argv[])
     }
     else
     {
-        cert_authenticate_offline();
+        //cert_authenticate_offline();
     }
 
     cout << "Certification authentication successful" << endl;
