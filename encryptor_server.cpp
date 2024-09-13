@@ -1,4 +1,4 @@
-#include "kyber512_kem.hpp"
+#include <kyber768_kem.hpp>
 #include <thread>
 #include <ctime>
 #include <signal.h>
@@ -633,12 +633,12 @@ int udp_connection(struct sockaddr_in *pt_servaddr, struct sockaddr_in *pt_cliad
 
 string get_pqckey(int new_socket)
 {
-    constexpr size_t KEY_LEN = 32;
-    std::vector<uint8_t> _cipher(kyber512_kem::CIPHER_LEN, 0);
+     constexpr size_t KEY_LEN = 32;
+    std::vector<uint8_t> _cipher(kyber768_kem::CIPHER_LEN, 0);
     std::vector<uint8_t> _shrd_key(KEY_LEN, 0);
     std::vector<uint8_t> _m(KEY_LEN, 0);
     auto m = std::span<uint8_t, KEY_LEN>(_m);
-    auto cipher = std::span<uint8_t, kyber512_kem::CIPHER_LEN>(_cipher);
+    auto cipher = std::span<uint8_t, kyber768_kem::CIPHER_LEN>(_cipher);
     auto shrd_key = std::span<uint8_t, KEY_LEN>(_shrd_key);
     prng::prng_t prng_pqc;
     prng_pqc.read(m);
@@ -651,15 +651,32 @@ string get_pqckey(int new_socket)
        3) Server encapsulates PQC key with client's public key and sends to client
     */
     std::vector<unsigned char> pqc_buffer(MAXLINE);
-    read(new_socket, &pqc_buffer[0], MAXLINE);
-    // read pqc buffer as string
-    string pqc_string = convertToString((char *)&pqc_buffer[0]);
 
-    std::vector<uint8_t> _pkey(kyber512_kem::PKEY_LEN, 0);
+    std::ifstream pk("PQC_PK");
+    std::stringstream bufferPK;
+    bufferPK << pk.rdbuf();
+    string buffer_PK = bufferPK.str();
+
+    if (buffer_PK.empty())
+    {
+        read(new_socket, &pqc_buffer[0], MAXLINE);
+    }
+
+    else
+    {
+        int x = 0;
+        for (unsigned int i = 0; i < buffer_PK.length(); i += 2)
+        {
+            string bytestring = buffer_PK.substr(i, 2);
+            pqc_buffer[x] = (char)strtol(bytestring.c_str(), NULL, 16);
+            x++;
+        }
+    }
+    std::vector<uint8_t> _pkey(kyber768_kem::PKEY_LEN, 0);
     _pkey = pqc_buffer;
 
-    auto pkey = std::span<uint8_t, kyber512_kem::PKEY_LEN>(_pkey);
-    auto skdf = kyber512_kem::encapsulate(m, pkey, cipher);
+    auto pkey = std::span<uint8_t, kyber768_kem::PKEY_LEN>(_pkey);
+    auto skdf = kyber768_kem::encapsulate(m, pkey, cipher);
     skdf.squeeze(shrd_key);
 
     string pqc_key = kyber_utils::to_hex(shrd_key);
@@ -673,7 +690,7 @@ string get_pqckey(int new_socket)
 void get_qkdkey(string qkd_ip, int new_socket)
 {
 
-    CryptoPP::SHA3_256 hash;
+     CryptoPP::SHA3_512 hash;
     CryptoPP::SHAKE128 shake128_hash;
 
     char bufferTCP[MAXLINE] = {0};
@@ -712,10 +729,10 @@ void help()
 // ECDH key exchange
 string PerformECDHKeyExchange(int socket)
 {
-    CryptoPP::AutoSeededRandomPool rng;
+   CryptoPP::AutoSeededRandomPool rng;
 
     // Set up the NIST P-521 curve domain
-    CryptoPP::ECDH<CryptoPP::ECP>::Domain dh(CryptoPP::ASN1::secp521r1());
+    CryptoPP::ECDH<CryptoPP::EC2N>::Domain dh(CryptoPP::ASN1::sect571k1());
 
     // Generate ECDH keys
     CryptoPP::SecByteBlock privateKey(dh.PrivateKeyLength());
@@ -763,18 +780,9 @@ string PerformECDHKeyExchange(int socket)
     hexEncoder.MessageEnd();
 
     std::cout << "Hexadecimal representation: " << hex << std::endl;
-    CryptoPP::Integer x = dh.GetGroupParameters().GetSubgroupGenerator().x;
-    CryptoPP::Integer y = dh.GetGroupParameters().GetSubgroupGenerator().y;
-    // take first 216 bytes of the x and y coordinates
-    string x_str = CryptoPP::IntToString(x);
-    string y_str = CryptoPP::IntToString(y);
-    xy_str = x_str.substr(0, 216) + y_str.substr(0, 216);
 
-    /*
-    // Close the socket
-    close(custom_connection);
-    client_fd = tcp_connection(srv_ip);
-    */
+    // Take first 432 HEX char = 216 bytes
+    xy_str = (recKey + pubKey).substr(0, 432);
 
     return hex;
 }
@@ -813,7 +821,7 @@ string hmac_hashing(string &salt, string &key)
         padded_message.resize(desired_length, '\0');
     }
 
-    CryptoPP::HMAC<CryptoPP::SHA3_256> hmac((const byte *)padded_key.data(), padded_key.size());
+    CryptoPP::HMAC<CryptoPP::SHA3_512> hmac((const byte *)padded_key.data(), padded_key.size());
     string result;
 
     CryptoPP::StringSource(padded_message, true, new CryptoPP::HashFilter(hmac, new CryptoPP::HexEncoder(new CryptoPP::StringSink(result))));
@@ -824,9 +832,9 @@ string hmac_hashing(string &salt, string &key)
 string sha3_hashing(string key, string *public_value)
 {
 
-    CryptoPP::SHA3_256 hash;
+     CryptoPP::SHA3_512 hash;
 
-    byte digest[CryptoPP::SHA3_256::DIGESTSIZE];
+    byte digest[CryptoPP::SHA3_512::DIGESTSIZE];
     string concat = *public_value + key;
     hash.CalculateDigest(digest, (byte *)concat.c_str(), concat.length());
 
@@ -870,10 +878,10 @@ string xorStrings(const string &str1, const string &str2)
 
 SecByteBlock rekey_srv(int new_socket, string qkd_ip)
 {
-    CryptoPP::SHA3_256 hash;
+    CryptoPP::SHA3_512 hash;
     CryptoPP::SHAKE128 shake128_hash;
-    byte digest[CryptoPP::SHA3_256::DIGESTSIZE];
-    SecByteBlock sec_key(AES::MAX_KEYLENGTH);
+    byte digest[CryptoPP::SHA3_512::DIGESTSIZE];
+    SecByteBlock sec_key(AES::MAX_KEYLENGTH*2);
     counter++;
     // get system time and convert it to string
     time_t now = time(0);
@@ -910,7 +918,7 @@ SecByteBlock rekey_srv(int new_socket, string qkd_ip)
         string key = xorStrings(second_round_key_one, second_round_key_two);
         cout << "Key: " << key << endl;
 
-        // hash final key with SHA3_256
+        // hash final key with SHA3_512
         hash.CalculateDigest(digest, (byte *)key.c_str(), key.length());
         CryptoPP::HexEncoder encode_key;
         string output_key;
@@ -964,7 +972,7 @@ SecByteBlock rekey_srv(int new_socket, string qkd_ip)
 
         string key = xorStrings(third_round_key_one, fourth_round_key_one);
 
-        // hash final key with SHA3_256
+        // hash final key with SHA3_512
         hash.CalculateDigest(digest, (byte *)key.c_str(), key.length());
         CryptoPP::HexEncoder encode_key;
         string output_key;
@@ -1125,7 +1133,7 @@ int main(int argc, char *argv[])
         key = rekey_srv(new_socket, qkd_ip);
         cout << "Key length: " << key.size() << endl;
         memcpy(key_encrypt, key, AES::MAX_KEYLENGTH);
-        memcpy(key_decrypt, key, AES::MAX_KEYLENGTH);
+        memcpy(key_decrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
 
         fcntl(new_socket, F_SETFL, O_NONBLOCK);
         status = -1;

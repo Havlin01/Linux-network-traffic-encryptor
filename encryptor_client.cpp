@@ -1,4 +1,4 @@
-#include <kyber512_kem.hpp>
+#include <kyber768_kem.hpp>
 #include <thread>
 #include <ctime>
 #include <chrono>
@@ -612,11 +612,11 @@ string get_pqckey(int client_fd)
     auto z = std::span<uint8_t, SEED_LEN>(_z);
 
     // Public/private keypair
-    std::vector<uint8_t> _pkey(kyber512_kem::PKEY_LEN, 0);
-    std::vector<uint8_t> _skey(kyber512_kem::SKEY_LEN, 0);
+    std::vector<uint8_t> _pkey(kyber768_kem::PKEY_LEN, 0);
+    std::vector<uint8_t> _skey(kyber768_kem::SKEY_LEN, 0);
 
-    auto pkey = std::span<uint8_t, kyber512_kem::PKEY_LEN>(_pkey);
-    auto skey = std::span<uint8_t, kyber512_kem::SKEY_LEN>(_skey);
+    auto pkey = std::span<uint8_t, kyber768_kem::PKEY_LEN>(_pkey);
+    auto skey = std::span<uint8_t, kyber768_kem::SKEY_LEN>(_skey);
 
     // Seed required for key encapsulation
     std::vector<uint8_t> _m(SEED_LEN, 0);
@@ -633,9 +633,43 @@ string get_pqckey(int client_fd)
     prng_pqc.read(d);
     prng_pqc.read(z);
 
-    // Generate a keypair
-    kyber512_kem::keygen(d, z, pkey, skey);
+    std::ifstream pk("PQC_PK");
+    std::stringstream bufferPK;
+    bufferPK << pk.rdbuf();
+    // buffer to string
+    string buffer_PK = bufferPK.str();
 
+    std::ifstream sk("PQC_SK");
+    std::stringstream bufferSK;
+    bufferSK << sk.rdbuf();
+    // buffer to string
+    string buffer_SK = bufferSK.str();
+
+    bool exchange = (buffer_PK.empty() || buffer_SK.empty());
+    if (exchange)
+    {
+        // Generate a keypair
+        kyber768_kem::keygen(d, z, pkey, skey);
+    }
+
+    else
+    {
+        cout << "Reading PQC keys from files" << endl;
+        int x = 0;
+        for (int i = 0; i < buffer_PK.length(); i += 2)
+        {
+            string bytestring = buffer_PK.substr(i, 2);
+            pkey[x] = (char)strtol(bytestring.c_str(), NULL, 16);
+            x++;
+        }
+        x = 0;
+        for (int i = 0; i < buffer_SK.length(); i += 2)
+        {
+            string bytestring = buffer_SK.substr(i, 2);
+            skey[x] = (char)strtol(bytestring.c_str(), NULL, 16);
+            x++;
+        }
+    }
     // Fill up seed required for key encapsulation, using PRNG
     prng_pqc.read(m);
 
@@ -645,10 +679,14 @@ string get_pqckey(int client_fd)
        encapsulated PQC key
     */
     std::vector<unsigned char> pqc_buffer(MAXLINE);
-    send(client_fd, pkey.data(), pkey.size(), 0);
+    if (exchange)
+    {
+        cout << "Sending PQC PK" << endl;
+        send(client_fd, pkey.data(), pkey.size(), 0);
+    }
     read(client_fd, &pqc_buffer[0], MAXLINE);
 
-    std::vector<uint8_t> _cipher(kyber512_kem::CIPHER_LEN, 0);
+    std::vector<uint8_t> _cipher(kyber768_kem::CIPHER_LEN, 0);
     _cipher = pqc_buffer;
 
     // take the first 216 bytes of the cipher text and put it in the new variable called cipher_data
@@ -656,8 +694,8 @@ string get_pqckey(int client_fd)
     kyber_cipher_data_str = kyber_utils::to_hex(cipher_data);
 
     // Decapsulate cipher text and obtain KDF
-    auto cipher = std::span<uint8_t, kyber512_kem::CIPHER_LEN>(_cipher);
-    auto rkdf = kyber512_kem::decapsulate(skey, cipher);
+    auto cipher = std::span<uint8_t, kyber768_kem::CIPHER_LEN>(_cipher);
+    auto rkdf = kyber768_kem::decapsulate(skey, cipher);
     rkdf.squeeze(shrd_key);
     string pqc_key = kyber_utils::to_hex(shrd_key);
 
@@ -684,7 +722,7 @@ string PerformECDHKeyExchange(int client_fd)
     CryptoPP::AutoSeededRandomPool rng;
 
     // Set up the NIST P-521 curve domain
-    CryptoPP::ECDH<CryptoPP::ECP>::Domain dh(CryptoPP::ASN1::secp521r1());
+    CryptoPP::ECDH<CryptoPP::EC2N>::Domain dh(CryptoPP::ASN1::sect571k1());
     // Generate ECDH keys
     CryptoPP::SecByteBlock privateKey(dh.PrivateKeyLength());
     CryptoPP::SecByteBlock publicKey(dh.PublicKeyLength());
@@ -694,12 +732,12 @@ string PerformECDHKeyExchange(int client_fd)
     CryptoPP::HexEncoder privEncoder(new CryptoPP::StringSink(privKey), false);
     privEncoder.Put(privateKey, privateKey.size());
     privEncoder.MessageEnd();
-    cout << "Private key: " << privKey << std::endl;
+    //cout << "Private key: " << privKey << std::endl;
     string pubKey;
     CryptoPP::HexEncoder pubEncoder(new CryptoPP::StringSink(pubKey), false);
     pubEncoder.Put(publicKey, publicKey.size());
     pubEncoder.MessageEnd();
-    cout << "Public key: " << pubKey << std::endl;
+    //cout << "Public key: " << pubKey << std::endl;
 
     // Send public key to the server
     send(client_fd, publicKey.BytePtr(), publicKey.SizeInBytes(), 0);
@@ -708,7 +746,7 @@ string PerformECDHKeyExchange(int client_fd)
     CryptoPP::HexEncoder sentEncoder(new CryptoPP::StringSink(sentKey), false);
     sentEncoder.Put(publicKey, publicKey.size());
     sentEncoder.MessageEnd();
-    cout << "Sent key: " << sentKey << std::endl;
+    //cout << "Sent key: " << sentKey << std::endl;
     // Receive the server's public key
     CryptoPP::SecByteBlock receivedKey(dh.PublicKeyLength());
     // CryptoPP::SecByteBlock dump(dh.PublicKeyLength()* 6 -200);
@@ -720,7 +758,7 @@ string PerformECDHKeyExchange(int client_fd)
     CryptoPP::HexEncoder recEncoder(new CryptoPP::StringSink(recKey), false);
     recEncoder.Put(receivedKey, receivedKey.size());
     recEncoder.MessageEnd();
-    cout << "Received key: " << recKey << std::endl;
+    //cout << "Received key: " << recKey << std::endl;
     // Derive shared secret
     CryptoPP::SecByteBlock sharedSecret(dh.AgreedValueLength());
     dh.Agree(sharedSecret, privateKey, receivedKey);
@@ -730,19 +768,10 @@ string PerformECDHKeyExchange(int client_fd)
     hexEncoder.Put(sharedSecret, sharedSecret.size());
     hexEncoder.MessageEnd();
 
-    std::cout << "Hexadecimal representation: " << hex << std::endl;
+    //std::cout << "Hexadecimal representation: " << hex << std::endl;
 
-    CryptoPP::Integer x = dh.GetGroupParameters().GetSubgroupGenerator().x;
-    CryptoPP::Integer y = dh.GetGroupParameters().GetSubgroupGenerator().y;
-    // take first 216 bytes of the x and y coordinates
-    string x_str = CryptoPP::IntToString(x);
-    string y_str = CryptoPP::IntToString(y);
-    xy_str = x_str.substr(0, 216) + y_str.substr(0, 216);
-    /*
-    // Close the socket
-    close(custom_connection);
-    client_fd = tcp_connection(srv_ip);
-    */
+    // Take first 432 HEX chars = 216 Bytes
+    xy_str = (pubKey + recKey).substr(0, 432);
 
     return hex;
 }
@@ -765,7 +794,7 @@ string hmac_hashing(string salt, string key)
 
     return hmac_output;
     */
-    const size_t desired_length = 216;
+     const size_t desired_length = 216;
 
     string padded_key(salt);
     string padded_message(key);
@@ -781,7 +810,7 @@ string hmac_hashing(string salt, string key)
         padded_message.resize(desired_length, '\0');
     }
 
-    CryptoPP::HMAC<CryptoPP::SHA3_256> hmac((const byte *)padded_key.data(), padded_key.size());
+    CryptoPP::HMAC<CryptoPP::SHA3_512> hmac((const byte *)padded_key.data(), padded_key.size());
     string result;
 
     CryptoPP::StringSource(padded_message, true, new CryptoPP::HashFilter(hmac, new CryptoPP::HexEncoder(new CryptoPP::StringSink(result))));
@@ -792,9 +821,9 @@ string hmac_hashing(string salt, string key)
 string sha3_hashing(string key, string *public_value)
 {
 
-    CryptoPP::SHA3_256 hash;
+     CryptoPP::SHA3_512 hash;
 
-    byte digest[CryptoPP::SHA3_256::DIGESTSIZE];
+    byte digest[CryptoPP::SHA3_512::DIGESTSIZE];
     string concat = *public_value + key;
     hash.CalculateDigest(digest, (byte *)concat.c_str(), concat.length());
 
@@ -811,7 +840,7 @@ string sha3_hashing(string key, string *public_value)
 
 string xorStrings(const string &str1, const string &str2)
 {
-    // Ensure the strings have the same length
+     // Ensure the strings have the same length
     if (str1.length() != str2.length())
     {
         throw std::runtime_error("Strings must have the same length for XOR operation");
@@ -831,33 +860,33 @@ string xorStrings(const string &str1, const string &str2)
 
 string get_qkdkey(string qkd_ip, int client_fd)
 {
-    CryptoPP::SHA3_256 hash;
-    CryptoPP::SHAKE128 shake128_hash;
+    CryptoPP::SHA3_512 hash;
+        CryptoPP::SHAKE128 shake128_hash;
 
-    system(("./sym-ExpQKD 'client' " + qkd_ip).c_str());
+        system(("./sym-ExpQKD 'client' " + qkd_ip).c_str());
 
-    std::ifstream t("key");
-    std::stringstream buffer;
-    buffer << t.rdbuf();
-    // buffer to string
-    string buffer_str = buffer.str();
+        std::ifstream t("key");
+        std::stringstream buffer;
+        buffer << t.rdbuf();
+        // buffer to string
+        string buffer_str = buffer.str();
 
-    std::ifstream s("keyID");
-    std::stringstream bufferTCP;
-    bufferTCP << s.rdbuf();
-    // bufferTCP to string
-    string bufferTCP_str = bufferTCP.str();
-    cout << "KeyID: " << bufferTCP_str << endl;
+        std::ifstream s("keyID");
+        std::stringstream bufferTCP;
+        bufferTCP << s.rdbuf();
+        // bufferTCP to string
+        string bufferTCP_str = bufferTCP.str();
+        cout << "KeyID: " << bufferTCP_str << endl;
 
-    send(client_fd, bufferTCP_str.c_str(), bufferTCP_str.length(), 0);
-    // hash content of bufferTCP with SHAKE128
-    shake128_hash.Update((const byte *)bufferTCP.str().c_str(), bufferTCP.str().length());
-    string pom_param;
-    shake128_hash.TruncatedFinal((byte *)pom_param.c_str(), 216);
-    qkd_parameter = pom_param + bufferTCP.str().substr(0, 216);
-    cout << "QKD key established:" << buffer_str << endl;
+        send(client_fd, bufferTCP_str.c_str(), bufferTCP_str.length(), 0);
+        // hash content of bufferTCP with SHAKE128
+        shake128_hash.Update((const byte *)bufferTCP.str().c_str(), bufferTCP.str().length());
+        string pom_param;
+        shake128_hash.TruncatedFinal((byte *)pom_param.c_str(), 216);
+        qkd_parameter = pom_param + bufferTCP.str().substr(0, 216);
+        cout << "QKD key established:" << buffer_str << endl;
 
-    return buffer_str;
+        return buffer_str;
 }
 
 /*
@@ -868,10 +897,11 @@ string get_qkdkey(string qkd_ip, int client_fd)
 */
 SecByteBlock rekey_cli(int client_fd, string qkd_ip, const char *srv_ip, string buffer_str)
 {
-    CryptoPP::SHA3_256 hash;
+    CryptoPP::SHA3_512 hash;
     CryptoPP::SHAKE128 shake128_hash;
-    byte digest[CryptoPP::SHA3_256::DIGESTSIZE];
-    SecByteBlock sec_key(AES::MAX_KEYLENGTH);
+    byte digest[CryptoPP::SHA3_512::DIGESTSIZE];
+    SecByteBlock sec_key(AES::MAX_KEYLENGTH*2);
+
 
     counter++;
     // get system time and convert it to string
@@ -916,7 +946,7 @@ SecByteBlock rekey_cli(int client_fd, string qkd_ip, const char *srv_ip, string 
         string key = xorStrings(second_round_key_one, second_round_key_two);
         cout << "Key: " << key << endl;
 
-        // hash final key with SHA3_256
+        // hash final key with SHA3_512
         hash.CalculateDigest(digest, (byte *)key.c_str(), key.length());
         CryptoPP::HexEncoder encode_key;
         string output_key;
@@ -986,7 +1016,7 @@ SecByteBlock rekey_cli(int client_fd, string qkd_ip, const char *srv_ip, string 
         string key = xorStrings(third_round_key_one, fourth_round_key_one);
         cout << "Key: " << key << endl;
 
-        // hash final key with SHA3_256
+        // hash final key with SHA3_512
         hash.CalculateDigest(digest, (byte *)key.c_str(), key.length());
         CryptoPP::HexEncoder encode_key;
         string output_key;
@@ -1127,7 +1157,7 @@ int main(int argc, char *argv[])
             }
 
             key = rekey_cli(client_fd, qkd_ip, srv_ip, bufferTCP_str);
-            memcpy (key_decrypt, key, AES::MAX_KEYLENGTH);
+            memcpy (key_decrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
             memcpy (key_encrypt, key, AES::MAX_KEYLENGTH);
 
             ref = time(NULL);
