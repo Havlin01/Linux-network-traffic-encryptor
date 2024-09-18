@@ -925,7 +925,7 @@ SecByteBlock rekey_cli(int client_fd, string qkd_ip, const char *srv_ip, string 
 
     if (qkd_ip.empty())
     {
-
+        auto start = std::chrono::high_resolution_clock::now();
         // all parameters set, starting to creating hybrid key
         string key_one = hmac_hashing(salt, pqc_key);
         cout << "Key one: " << key_one << endl;
@@ -975,6 +975,9 @@ SecByteBlock rekey_cli(int client_fd, string qkd_ip, const char *srv_ip, string 
 
         cout << "Kyber cipher data: " << kyber_cipher_data_str << endl;
         cout << "XY coordinates: " << xy_str << endl;
+
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         // send(client_fd, output_key.c_str(), output_key.length(), 0);
 
@@ -1143,12 +1146,12 @@ int main(int argc, char *argv[])
 
 
         // Set TCP socket to non-blocking state
-        int ctr = 0;
-        while (status != 0)
-        {
 
-            while (ctr < 100)
-            {           
+        int crt = 0;
+        while (status != 0)
+        {   
+            while (crt < 100)
+            {
             // Establish new hybrid key
             // fcntl(client_fd, F_SETFL, 0);
             fcntl(client_fd, F_SETFL, fcntl(client_fd, F_GETFL, 0) & ~O_NONBLOCK);
@@ -1158,21 +1161,20 @@ int main(int argc, char *argv[])
             {
                 bufferTCP_str = get_qkdkey(qkd_ip, client_fd);
             }
-            auto start = std::chrono::high_resolution_clock::now();
+
             key = rekey_cli(client_fd, qkd_ip, srv_ip, bufferTCP_str);
-            auto stop = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
             memcpy (key_decrypt, key, AES::MAX_KEYLENGTH);
             memcpy (key_encrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
 
             ref = time(NULL);
             fcntl(client_fd, F_SETFL, O_NONBLOCK);
 
-            std::cout << "Time taken: " << duration << std::endl;
-            ctr++;
+            cout << "New key established" << endl;
+            crt++;
+
             }
             // Trigger Rekey after some period of time (10 min)
-            while (false)
+            while (true)
             {
                  status = read(client_fd, bufferTCP, MAXLINE);
 
