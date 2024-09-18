@@ -979,6 +979,8 @@ SecByteBlock rekey_cli(int client_fd, string qkd_ip, const char *srv_ip, string 
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
+        cout << "Time taken for rekeying: " << duration << " milliseconds" << endl;
+
         // send(client_fd, output_key.c_str(), output_key.length(), 0);
 
         return sec_key;
