@@ -104,7 +104,7 @@ std::atomic<int> counter = 0;
 std::atomic<int> read_order = 0;
 std::atomic<int> send_order = 1;
 std::mutex m1;
-std::vector<int> durationVector = {};
+std::vector<int> durationVector;
 
 /*
    Get encryption order after reading from tun interface
