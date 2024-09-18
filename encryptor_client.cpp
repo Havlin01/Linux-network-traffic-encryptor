@@ -1155,19 +1155,21 @@ int main(int argc, char *argv[])
             {
                 bufferTCP_str = get_qkdkey(qkd_ip, client_fd);
             }
-
+            auto start = std::chrono::high_resolution_clock::now();
             key = rekey_cli(client_fd, qkd_ip, srv_ip, bufferTCP_str);
+            auto stop = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
             memcpy (key_decrypt, key, AES::MAX_KEYLENGTH);
             memcpy (key_encrypt, key + AES::MAX_KEYLENGTH, AES::MAX_KEYLENGTH);
 
             ref = time(NULL);
             fcntl(client_fd, F_SETFL, O_NONBLOCK);
 
-            cout << "New key established" << endl;
+            std::cout << "Time taken: " << duration << std::endl;
 
 
             // Trigger Rekey after some period of time (10 min)
-            while (true)
+            while (false)
             {
                  status = read(client_fd, bufferTCP, MAXLINE);
 
