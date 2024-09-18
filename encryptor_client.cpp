@@ -104,7 +104,6 @@ std::atomic<int> counter = 0;
 std::atomic<int> read_order = 0;
 std::atomic<int> send_order = 1;
 std::mutex m1;
-std::vector<int> durationVector;
 
 /*
    Get encryption order after reading from tun interface
@@ -920,7 +919,6 @@ SecByteBlock rekey_cli(int client_fd, string qkd_ip, const char *srv_ip, string 
         send(client_fd, rekey, strlen(rekey), 0);
     }
 
-        auto start = std::chrono::high_resolution_clock::now();
     string pqc_key = get_pqckey(client_fd);
     cout << "PQC key: " << pqc_key << endl;
     listen(client_fd, 3);
@@ -979,9 +977,6 @@ SecByteBlock rekey_cli(int client_fd, string qkd_ip, const char *srv_ip, string 
         cout << "Kyber cipher data: " << kyber_cipher_data_str << endl;
         cout << "XY coordinates: " << xy_str << endl;
 
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        durationVector.push_back(duration);
 
         // send(client_fd, output_key.c_str(), output_key.length(), 0);
 
@@ -1151,11 +1146,10 @@ int main(int argc, char *argv[])
 
         // Set TCP socket to non-blocking state
 
-        int crt = 0;
+
         while (status != 0)
         {   
-            while (crt < 100)
-            {
+           
             // Establish new hybrid key
             // fcntl(client_fd, F_SETFL, 0);
             fcntl(client_fd, F_SETFL, fcntl(client_fd, F_GETFL, 0) & ~O_NONBLOCK);
@@ -1176,12 +1170,7 @@ int main(int argc, char *argv[])
             cout << "New key established" << endl;
             crt++;
 
-            }
-
-            for (int element : durationVector)
-            {
-                std::cout << element << std::endl;
-            }
+            
             
             // Trigger Rekey after some period of time (10 min)
             while (true)
