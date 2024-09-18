@@ -1167,10 +1167,7 @@ int main(int argc, char *argv[])
             ref = time(NULL);
             fcntl(client_fd, F_SETFL, O_NONBLOCK);
 
-            cout << "New key established" << endl;
-            crt++;
-
-            
+            cout << "New key established" << endl;            
             
             // Trigger Rekey after some period of time (10 min)
             while (true)
