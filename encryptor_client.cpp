@@ -917,6 +917,7 @@ SecByteBlock rekey_cli(int client_fd, string qkd_ip, const char *srv_ip, string 
         send(client_fd, rekey, strlen(rekey), 0);
     }
 
+        auto start = std::chrono::high_resolution_clock::now();
     string pqc_key = get_pqckey(client_fd);
     cout << "PQC key: " << pqc_key << endl;
     listen(client_fd, 3);
@@ -925,7 +926,6 @@ SecByteBlock rekey_cli(int client_fd, string qkd_ip, const char *srv_ip, string 
 
     if (qkd_ip.empty())
     {
-        auto start = std::chrono::high_resolution_clock::now();
         // all parameters set, starting to creating hybrid key
         string key_one = hmac_hashing(salt, pqc_key);
         cout << "Key one: " << key_one << endl;
