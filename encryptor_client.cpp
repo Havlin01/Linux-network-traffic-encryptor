@@ -1143,9 +1143,12 @@ int main(int argc, char *argv[])
 
 
         // Set TCP socket to non-blocking state
-
+        int ctr = 0;
         while (status != 0)
         {
+
+            while (ctr < 100)
+            {           
             // Establish new hybrid key
             // fcntl(client_fd, F_SETFL, 0);
             fcntl(client_fd, F_SETFL, fcntl(client_fd, F_GETFL, 0) & ~O_NONBLOCK);
@@ -1166,8 +1169,8 @@ int main(int argc, char *argv[])
             fcntl(client_fd, F_SETFL, O_NONBLOCK);
 
             std::cout << "Time taken: " << duration << std::endl;
-
-
+            ctr++;
+            }
             // Trigger Rekey after some period of time (10 min)
             while (false)
             {
