@@ -95,6 +95,7 @@ using CryptoPP::GCM;
 
 #include "assert.h"
 #include <mutex>
+#include <vector>
 
 string xy_str;
 string kyber_cipher_data_str;
@@ -103,6 +104,8 @@ std::atomic<int> counter = 0;
 std::atomic<int> read_order = 0;
 std::atomic<int> send_order = 1;
 std::mutex m1;
+std::vector<int> durationVector = {};
+
 /*
    Get encryption order after reading from tun interface
 */
@@ -978,8 +981,7 @@ SecByteBlock rekey_cli(int client_fd, string qkd_ip, const char *srv_ip, string 
 
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
-        std::cout << "Time taken for rekeying: " << duration << " milliseconds" << std::endl;
+        durationVector.push_back(duration);
 
         // send(client_fd, output_key.c_str(), output_key.length(), 0);
 
@@ -1175,6 +1177,12 @@ int main(int argc, char *argv[])
             crt++;
 
             }
+
+            for (int element : durationVector)
+            {
+                std::cout << element << std::endl;
+            }
+            
             // Trigger Rekey after some period of time (10 min)
             while (true)
             {
