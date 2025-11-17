@@ -1,5 +1,8 @@
 #!/bin/sh
 
+OPENSSL_INC_PATH="/usr/local/include"
+OPENSSL_LIB_PATH="/usr/local/lib64"
+
 Help()
 {
    echo "Usage: ./install.sh [Other gateway network]"
@@ -15,29 +18,15 @@ fi
 
 sudo apt update
 # Install dependencies
+sudo apt install -y libboost-all-dev
 cat requirements.txt | sudo xargs apt install -y
 
 # Add routing information
 Route_IP=$1
 
-# Install Kyber library
-git clone https://github.com/gabsssq/kyber.git
-(cd kyber && git submodule update --init)
-
-# Install AES library
-#check if cryptopp is already installed, if yes, skip the installation
-if [ -d "cryptopp" ]; then
-    echo "cryptopp is already installed"
-else
-    wget https://github.com/weidai11/cryptopp/releases/download/CRYPTOPP_8_7_0/cryptopp870.zip
-   unzip -aoq cryptopp870.zip -d cryptopp
-   (cd cryptopp && sudo make)
-   (cd cryptopp && sudo make install)
-fi
-
-# Install OpenSSL library
-sudo apt install openssl -y
-
+# Create TUN interface
+#delete the tun0 interface if it already exists
+sudo ip link delete tun0
 sudo ip tuntap add name tun0 mode tun
 sudo ip link set tun0 up
 sudo ip addr add 192.168.1.1 peer 192.168.1.2 dev tun0
@@ -45,7 +34,12 @@ sudo ip addr add 192.168.1.1 peer 192.168.1.2 dev tun0
 echo "1" | sudo tee /proc/sys/net/ipv4/ip_forward
 sudo ip route add $Route_IP via 192.168.1.2
 chmod +x sym-ExpQKD
-g++ -std=c++20 -O3 -pthread -I /usr/local/include/ -I ./kyber/include/ -I ./kyber/subtle/include/ -I ./kyber/sha3/include/ encryptor_server.cpp  /usr/local/lib/libcryptopp.a -o encryptor_server -lssl -lcrypto -ggdb3
-g++ -std=c++20 -O3 -pthread -I /usr/local/include/ -I ./kyber/include/ -I ./kyber/subtle/include/ -I ./kyber/sha3/include/ encryptor_client.cpp  /usr/local/lib/libcryptopp.a -o encryptor_client -lssl -lcrypto -ggdb3
+g++ -std=c++20 -Wall -O3 -I"$OPENSSL_INC_PATH" -o encryptor_server encryptor_server.cpp -L"$OPENSSL_LIB_PATH" -Wl,-rpath,"$OPENSSL_LIB_PATH" -lssl -lcrypto -pthread
+g++ -std=c++20 -Wall -O3 -I"$OPENSSL_INC_PATH" -o encryptor_client encryptor_client.cpp -L"$OPENSSL_LIB_PATH" -Wl,-rpath,"$OPENSSL_LIB_PATH" -lssl -lcrypto -pthread
 touch key
 touch keyID
+echo
+echo "Installation complete."
+echo "You can now run the executables directly."
+echo "Example for server: ./encryptor_server"
+echo "Example for client: ./encryptor_client <server_ip>"
