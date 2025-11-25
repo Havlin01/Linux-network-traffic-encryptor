@@ -343,9 +343,7 @@ string read_tun(int tundesc)
     return data;
 }
 
-/* Virtual interface data write.
-   Data will appear as if it arrived at
-   virtual interface and can be routed further */
+
 
 void write_tun(int tundesc, string message)
 {
@@ -463,14 +461,7 @@ string decrypt_data(const std::vector<unsigned char> &key, const string &cipher_
     }
 }
 
-/*
-   Aggregation of functions needed for data recieve:
-   1) Receive incoming encrypted data
-   2) Decrypt data and check integrity
-   3) Write decrypted data to virtual interface
 
-   Returns false if there are no more data available on socket.
-*/
 
 bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc, std::atomic<int> &read_order, std::atomic<int> &send_order)
 {
@@ -505,14 +496,6 @@ bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
     return true;
 }
 
-/*
-   Aggregation of functions needed for encryption and data send:
-   1) Read data from virtual interface
-   2) Encrypt data
-   3) Send encrypted data
-
-   Returns false if there are no more data available on virtual interface.
-*/
 
 bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc, std::atomic<int> &read_order, std::atomic<int> &send_order)
 {
@@ -933,7 +916,7 @@ void get_qkdkey(string qkd_ip, tcp::socket &new_socket)
 
     cout << "QKD keyID recieved: " << bufferTCP << endl;
 
-    // Hash content of bufferTCP with SHAKE128 using OpenSSL
+    
     std::vector<unsigned char> shake_output(216);
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     const EVP_MD *shake128 = EVP_shake128();
@@ -944,8 +927,7 @@ void get_qkdkey(string qkd_ip, tcp::socket &new_socket)
 
     string pom_param = to_hex(shake_output);
 
-    // The original logic had a potential issue with non-printable characters.
-    // Using hex representation is safer.
+    
     qkd_parameter = pom_param + bufferTCP.substr(0, 216);
 }
 
@@ -1192,12 +1174,7 @@ string xorStrings_raw(const string &str1, const string &str2)
     return result;
 }
 
-/*
-   Rekeying - client mode
 
-   Server gets new key from QKD server, combines it with PQC key
-   and than send its ID to gateway in server mode.
-*/
 
 std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip, const std::string &chosen_pqc_alg)
 {
