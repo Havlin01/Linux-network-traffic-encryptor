@@ -447,14 +447,7 @@ string decrypt_data(const std::vector<unsigned char> &key, const string &cipher_
     }
 }
 
-/*
-   Aggregation of functions needed for data recieve:
-   1) Receive incoming encrypted data
-   2) Decrypt data and check integrity
-   3) Write decrypted data to virtual interface
 
-   Returns false if there are no more data available on socket.
-*/
 
 bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc, std::atomic<int> &read_order, std::atomic<int> &send_order)
 {
@@ -488,14 +481,7 @@ bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
     return true;
 }
 
-/*
-   Aggregation of functions needed for encryption and data send:
-   1) Read data from virtual interface
-   2) Encrypt data
-   3) Send encrypted data
 
-   Returns false if there are no more data available on virtual interface.
-*/
 
 bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc, std::atomic<int> &read_order, std::atomic<int> &send_order)
 {
@@ -536,7 +522,7 @@ void thread_encrypt(udp::socket *socket, udp::endpoint remote_endpoint, const st
 
 std::string to_hex(const std::vector<uint8_t> &data)
 {
-    // Use std::stringstream for efficient string construction
+    
     std::stringstream ss;
 
     // Set formatting for uppercase hexadecimal output, padded with '0'
@@ -759,7 +745,6 @@ PQC_Alg_Properties get_pqc_alg_properties(const std::string & /*alg_name_ignored
     return props;
 }
 
-// --- THE UPDATED FUNCTION BLOCK ---
 
 std::string get_pqckey(tcp::socket &client_socket, const std::string &alg_name)
 {
