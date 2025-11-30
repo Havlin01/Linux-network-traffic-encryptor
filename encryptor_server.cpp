@@ -1390,7 +1390,7 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         return sec_key;
     }
 }
-void handle_client(tcp::socket tcp_socket, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
+void handle_client(tcp::socket tcp_socket, udp::socket& udp_socket, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
 {   
     std::vector<unsigned char> aes_keys;
     try {
@@ -1422,10 +1422,6 @@ void handle_client(tcp::socket tcp_socket, const std::string &chosen_pqc_alg, co
         }
 
         // --- 4. Open UDP socket and handshake ---
-        boost::asio::io_context io_context;
-        udp::socket udp_socket(io_context, udp::endpoint(udp::v4(), PORT));
-        std::cout << "Server UDP ready on port " << PORT << "\n";
-
         char udp_buf[1024];
         udp::endpoint client_udp_ep;
         size_t len = udp_socket.receive_from(boost::asio::buffer(udp_buf), client_udp_ep);
@@ -1436,7 +1432,6 @@ void handle_client(tcp::socket tcp_socket, const std::string &chosen_pqc_alg, co
         std::cout << "Server replied to UDP\n";
 
         // Set sockets to non-blocking for the main loop
-        udp_socket.non_blocking(true);
         tcp_socket.non_blocking(true);
 
         // --- 5. Main loop: handle further TCP commands ---
@@ -1496,7 +1491,6 @@ void handle_client(tcp::socket tcp_socket, const std::string &chosen_pqc_alg, co
 
         close(tundesc);
         tcp_socket.close();
-        udp_socket.close();
     }
     catch (const std::exception &e) {
         std::cerr << "Server exception: " << e.what() << "\n";
@@ -1537,16 +1531,22 @@ int main(int argc, char* argv[])
     try {
         boost::asio::io_context io_context;
         tcp::acceptor acceptor(io_context, tcp::endpoint(tcp::v4(), KEYPORT));
-        std::cout << "Server listening on port " << KEYPORT << std::endl;
+        std::cout << "Server TCP listening on port " << KEYPORT << std::endl;
+
+        // Create a single UDP socket for all clients
+        udp::socket udp_socket(io_context, udp::endpoint(udp::v4(), PORT));
+        udp_socket.non_blocking(true);
+        std::cout << "Server UDP listening on port " << PORT << std::endl;
 
         while (true) {
             tcp::socket socket(io_context);
             acceptor.accept(socket);
+            // Pass a reference to the single UDP socket to the client handler thread.
             if(!qkd_ip.empty()){
-                std::thread(handle_client, std::move(socket), chosen_pqc_alg, qkd_ip).detach();
+                std::thread(handle_client, std::move(socket), std::ref(udp_socket), chosen_pqc_alg, qkd_ip).detach();
             }
             else{
-                std::thread(handle_client, std::move(socket), chosen_pqc_alg, "").detach();
+                std::thread(handle_client, std::move(socket), std::ref(udp_socket), chosen_pqc_alg, "").detach();
             }
         }
     } catch (const std::exception &e) {
