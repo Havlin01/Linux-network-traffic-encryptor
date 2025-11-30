@@ -662,6 +662,17 @@ EVP_PKEY* create_pqc_pubkey_from_raw(const std::string& alg_name,
     return pkey;
 }
 
+// Struct to return multiple values from key exchanges
+struct PQCKeyMaterial {
+    std::string shared_secret_hex;
+    std::string ciphertext_hex;
+};
+
+struct ECDHKeyMaterial {
+    std::string shared_secret_hex;
+    std::string own_pubkey_hex;
+};
+
 // Struct to hold PQC algorithm properties
 struct PQC_Alg_Properties
 {
@@ -761,7 +772,7 @@ PQC_Alg_Properties get_pqc_alg_properties(const std::string & /*alg_name_ignored
 
 // --- THE UPDATED FUNCTION BLOCK ---
 
-std::string get_pqckey(tcp::socket &client_socket, const std::string &alg_name)
+PQCKeyMaterial get_pqckey(tcp::socket &client_socket, const std::string &alg_name)
 {
     PQC_Alg_Properties props = get_pqc_alg_properties(alg_name);
 
@@ -777,7 +788,7 @@ std::string get_pqckey(tcp::socket &client_socket, const std::string &alg_name)
     EVP_PKEY *server_pqc_pubkey = create_pqc_pubkey_from_raw(alg_name, server_pub);
     if (!server_pqc_pubkey)
     {
-        return "Error: Failed to import server public key.";
+        return {};
     }
 
     // 3. ENCAPSULATE
@@ -787,7 +798,7 @@ std::string get_pqckey(tcp::socket &client_socket, const std::string &alg_name)
         ERR_print_errors_fp(stderr);
         EVP_PKEY_CTX_free(ctx_encap);
         EVP_PKEY_free(server_pqc_pubkey);
-        return "Error: Encapsulate init failed.";
+        return {};
     }
 
     size_t ciphertext_len = 0;
@@ -797,7 +808,7 @@ std::string get_pqckey(tcp::socket &client_socket, const std::string &alg_name)
         ERR_print_errors_fp(stderr);
         EVP_PKEY_CTX_free(ctx_encap);
         EVP_PKEY_free(server_pqc_pubkey);
-        return "Error: Failed to get lengths for encapsulation.";
+        return {};
     }
 
     std::vector<unsigned char> _cipher(ciphertext_len);
@@ -810,7 +821,7 @@ std::string get_pqckey(tcp::socket &client_socket, const std::string &alg_name)
         ERR_print_errors_fp(stderr);
         EVP_PKEY_CTX_free(ctx_encap);
         EVP_PKEY_free(server_pqc_pubkey);
-        return "Error: Encapsulation failed.";
+        return {};
     }
 
     EVP_PKEY_CTX_free(ctx_encap);
@@ -819,14 +830,8 @@ std::string get_pqckey(tcp::socket &client_socket, const std::string &alg_name)
     std::string cipher_str(_cipher.begin(), _cipher.end());
     send_framed_message(client_socket, cipher_str);
 
-    // 5. HEX ENCODE SHARED SECRET
-    std::stringstream ss;
-    ss << std::hex << std::uppercase << std::setfill('0');
-    for (unsigned char byte : _shrd_key)
-        ss << std::setw(2) << (int)byte;
-
     EVP_PKEY_free(server_pqc_pubkey);
-    return ss.str();
+    return {to_hex(_shrd_key), to_hex(_cipher)};
 }
 
 // Program usage help
@@ -841,7 +846,7 @@ void help()
          << endl;
 }
 
-std::string PerformECDHKeyExchange(tcp::socket &sock)
+ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
 {
     EVP_PKEY *client_key = nullptr;
     EVP_PKEY_CTX *pctx = nullptr;
@@ -861,7 +866,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         ERR_print_errors_fp(stderr);
         if (pctx)
             EVP_PKEY_CTX_free(pctx);
-        return "";
+        return {};
     }
     EVP_PKEY_CTX_free(pctx);
     pctx = nullptr;
@@ -873,7 +878,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         std::cerr << "Error: EVP_PKEY_get_octet_string_param (len) failed for client pubkey." << std::endl;
         ERR_print_errors_fp(stderr);
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
     std::vector<unsigned char> client_pub(client_pub_len);
     if (EVP_PKEY_get_octet_string_param(client_key, OSSL_PKEY_PARAM_PUB_KEY,
@@ -882,7 +887,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         std::cerr << "Error: EVP_PKEY_get_octet_string_param (export) failed for client pubkey." << std::endl;
         ERR_print_errors_fp(stderr);
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
 
     // Optional debug
@@ -905,7 +910,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
     {
         std::cerr << "Error: Failed to send client's public key: " << e.what() << std::endl;
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
 
     // 4) Receive server's public key (framed)
@@ -918,7 +923,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
     {
         std::cerr << "Error: Failed to receive server's public key: " << e.what() << std::endl;
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
     std::vector<unsigned char> server_pub(server_pub_str.begin(), server_pub_str.end());
     std::cout << "Client DEBUG: received server_pub len=" << server_pub.size() << std::endl;
@@ -938,7 +943,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         std::cerr << "Error: Unexpected server public key length: got " << server_pub.size()
                   << " expected " << expected_len << std::endl;
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
 
     // 5) Create peer EVP_PKEY from server raw EC point using EVP_PKEY_fromdata
@@ -948,7 +953,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         std::cerr << "Error: EVP_PKEY_CTX_new_from_name(NULL, \"EC\", NULL) failed\n";
         ERR_print_errors_fp(stderr);
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
     if (EVP_PKEY_fromdata_init(fromctx) != 1)
     {
@@ -956,7 +961,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         ERR_print_errors_fp(stderr);
         EVP_PKEY_CTX_free(fromctx);
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
 
     OSSL_PARAM params[3];
@@ -972,7 +977,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         ERR_print_errors_fp(stderr);
         EVP_PKEY_CTX_free(fromctx);
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
     EVP_PKEY_CTX_free(fromctx);
 
@@ -984,7 +989,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         ERR_print_errors_fp(stderr);
         EVP_PKEY_free(peer_key);
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
 
     if (EVP_PKEY_derive_init(dctx) <= 0 ||
@@ -995,7 +1000,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         EVP_PKEY_CTX_free(dctx);
         EVP_PKEY_free(peer_key);
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
 
     if (EVP_PKEY_derive(dctx, NULL, &shared_secret_len) <= 0)
@@ -1005,7 +1010,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         EVP_PKEY_CTX_free(dctx);
         EVP_PKEY_free(peer_key);
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
 
     shared_secret = (unsigned char *)OPENSSL_malloc(shared_secret_len);
@@ -1015,7 +1020,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         EVP_PKEY_CTX_free(dctx);
         EVP_PKEY_free(peer_key);
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
 
     if (EVP_PKEY_derive(dctx, shared_secret, &shared_secret_len) <= 0)
@@ -1026,7 +1031,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
         EVP_PKEY_CTX_free(dctx);
         EVP_PKEY_free(peer_key);
         EVP_PKEY_free(client_key);
-        return "";
+        return {};
     }
 
     // 7) Hex encode shared secret
@@ -1043,7 +1048,7 @@ std::string PerformECDHKeyExchange(tcp::socket &sock)
     EVP_PKEY_free(peer_key);
     EVP_PKEY_free(client_key);
 
-    return final_shared_secret_hex;
+    return {final_shared_secret_hex, to_hex(client_pub)};
 }
 
 string xorStrings(const string &str1, const string &str2)
@@ -1146,24 +1151,24 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     std::cout << "Received salt from server." << std::endl;
 
     // PQC key (framed)
-    std::string pqc_key = get_pqckey(client_socket, chosen_pqc_alg);
-    std::cout << "PQC key: " << pqc_key << std::endl;
+    PQCKeyMaterial pqc_material = get_pqckey(client_socket, chosen_pqc_alg);
+    std::cout << "PQC key: " << pqc_material.shared_secret_hex << std::endl;
 
     // sleep for QKD
     // std::this_thread::sleep_for(std::chrono::seconds(90));
 
     // ECDH key (framed)
-    std::string ecdh_key = PerformECDHKeyExchange(client_socket);
-    std::cout << "ECDH key: " << ecdh_key << std::endl;
+    ECDHKeyMaterial ecdh_material = PerformECDHKeyExchange(client_socket);
+    std::cout << "ECDH key: " << ecdh_material.shared_secret_hex << std::endl;
     if (qkd_ip.empty())
     {
         // First-round HMAC keys
-        auto key_one = hmac_hashing_bytes(salt, pqc_key);
-        auto key_two = hmac_hashing_bytes(salt, ecdh_key);
+        auto key_one = hmac_hashing_bytes(salt, pqc_material.shared_secret_hex);
+        auto key_two = hmac_hashing_bytes(salt, ecdh_material.shared_secret_hex);
 
         // SHA3-512 parameters
-        auto param_one = sha3_hashing_bytes(pqc_key, kyber_cipher_data_str);
-        auto param_two = sha3_hashing_bytes(ecdh_key, xy_str);
+        auto param_one = sha3_hashing_bytes(pqc_material.shared_secret_hex, pqc_material.ciphertext_hex);
+        auto param_two = sha3_hashing_bytes(ecdh_material.shared_secret_hex, ecdh_material.own_pubkey_hex);
 
         // Second-round HMAC keys
         auto second_round_key_one = hmac_hashing_bytes(std::string(param_one.begin(), param_one.end()),
@@ -1201,12 +1206,12 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     {   
         buffer_str = get_qkdkey(qkd_ip, client_socket);
         // Include third QKD key
-        auto key_one = hmac_hashing_bytes(salt, pqc_key);
-        auto key_two = hmac_hashing_bytes(salt, ecdh_key);
+        auto key_one = hmac_hashing_bytes(salt, pqc_material.shared_secret_hex);
+        auto key_two = hmac_hashing_bytes(salt, ecdh_material.shared_secret_hex);
         auto key_three = hmac_hashing_bytes(salt, buffer_str);
 
-        auto param_one = sha3_hashing_bytes(pqc_key, kyber_cipher_data_str);
-        auto param_two = sha3_hashing_bytes(ecdh_key, xy_str);
+        auto param_one = sha3_hashing_bytes(pqc_material.shared_secret_hex, pqc_material.ciphertext_hex);
+        auto param_two = sha3_hashing_bytes(ecdh_material.shared_secret_hex, ecdh_material.own_pubkey_hex);
         auto param_three = sha3_hashing_bytes(buffer_str, qkd_parameter);
 
         auto second_round_key_one = hmac_hashing_bytes(std::string(param_two.begin(), param_two.end()),
