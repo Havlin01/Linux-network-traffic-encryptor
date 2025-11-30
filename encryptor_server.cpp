@@ -1296,8 +1296,11 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
 void handle_client(tcp::socket tcp_socket, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
 {   
     std::vector<unsigned char> aes_keys;
-    // The io_context is now implicitly managed by the tcp_socket and the new udp_socket.
-    boost::asio::io_context& io_context = tcp_socket.get_executor().context();
+    // We need to cast the execution_context provided by the socket's executor
+    // back to the io_context it was created from.
+    boost::asio::io_context& io_context = dynamic_cast<boost::asio::io_context&>(
+        tcp_socket.get_executor().context()
+    );
     udp::socket udp_socket(io_context);
     int tundesc = -1;
 
