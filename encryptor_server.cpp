@@ -1293,30 +1293,45 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         return sec_key;
     }
 }
-void handle_client(tcp::socket::native_handle_type native_socket, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
+void handle_client(tcp::socket tcp_socket, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
 {   
     std::vector<unsigned char> aes_keys;
-    try {
-        // Each thread needs its own io_context to prevent blocking other threads.
-        boost::asio::io_context io_context;
-        tcp::socket tcp_socket(io_context);
-        tcp_socket.assign(tcp::v4(), native_socket);
+    // The io_context is now implicitly managed by the tcp_socket and the new udp_socket.
+    boost::asio::io_context& io_context = tcp_socket.get_executor().context();
+    udp::socket udp_socket(io_context);
+    int tundesc = -1;
 
+    try {
         std::cout << "New client connected: " << tcp_socket.remote_endpoint().address() << "\n";
 
         const std::string ready_msg = "READY";
         boost::asio::write(tcp_socket, boost::asio::buffer(ready_msg));
         std::cout << "READY sent to client\n";
 
+        // Robustly handle the initial "INIT_REKEY" message
         char init_buf[64] = {0};
         boost::system::error_code ec;
         size_t init_len = tcp_socket.read_some(boost::asio::buffer(init_buf), ec);
-        if (!ec && init_len > 0) {
-            std::string init_msg(init_buf, init_len);
-            if (init_msg == "INIT_REKEY") {
-                aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-                std::cout << "Initial rekey done, keys established\n";
-            }
+
+        if (ec) {
+            std::cerr << "Error during initial INIT_REKEY read: " << ec.message() << "\n";
+            tcp_socket.close();
+            return;
+        }
+        if (init_len == 0) {
+            std::cerr << "Client closed connection before sending INIT_REKEY\n";
+            tcp_socket.close();
+            return;
+        }
+
+        std::string init_msg(init_buf, init_len);
+        if (init_msg == "INIT_REKEY") {
+            aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+            std::cout << "Initial rekey done, keys established\n";
+        } else {
+            std::cerr << "Unexpected initial command: " << init_msg << "\n";
+            tcp_socket.close();
+            return;
         }
 
         if (aes_keys.size() < AES_GCM_KEY_LEN * 2) {
@@ -1326,7 +1341,8 @@ void handle_client(tcp::socket::native_handle_type native_socket, const std::str
         }
 
         // Create a dedicated UDP socket for this client on an ephemeral port
-        udp::socket udp_socket(io_context, udp::endpoint(udp::v4(), 0));
+        udp_socket.open(udp::v4());
+        udp_socket.bind(udp::endpoint(udp::v4(), 0));
         udp::endpoint client_udp_ep;
         unsigned short udp_port = udp_socket.local_endpoint().port();
         std::cout << "Client " << tcp_socket.remote_endpoint().address() 
@@ -1350,7 +1366,7 @@ void handle_client(tcp::socket::native_handle_type native_socket, const std::str
         udp_socket.non_blocking(true);
 
         std::atomic<int> read_order(1), send_order(1);
-        int tundesc = tun_open();
+        tundesc = tun_open();
         std::vector<unsigned char> key_decrypt(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
         std::vector<unsigned char> key_encrypt(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
 
@@ -1375,8 +1391,13 @@ void handle_client(tcp::socket::native_handle_type native_socket, const std::str
                     std::cout << "Client requested exit\n";
                     break;
                 }
-            } else if (ec != boost::asio::error::would_block) {
-                std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
+            } else if (ec == boost::asio::error::would_block) {
+                // No data, continue looping
+            } else if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset) {
+                std::cout << "Client disconnected (EOF/reset)\n";
+                break;
+            } else if (ec) {
+                std::cerr << "TCP error: " << ec.message() << "\n";
                 break;
             }
 
@@ -1414,12 +1435,16 @@ void handle_client(tcp::socket::native_handle_type native_socket, const std::str
             }
         }
 
-        close(tundesc);
-        tcp_socket.close();
-        udp_socket.close();
     }
     catch (const std::exception &e) {
         std::cerr << "Server exception: " << e.what() << "\n";
+    }
+
+    // Cleanup resources
+    if (tundesc != -1) {
+        close(tundesc);
+        tcp_socket.close();
+        udp_socket.close();
     }
 }
 
@@ -1476,12 +1501,12 @@ int main(int argc, char* argv[])
 
             reap_threads(client_threads);
 
-            if(!qkd_ip.empty()){
-                client_threads.emplace_back(handle_client, socket.release(), chosen_pqc_alg, qkd_ip);
-            }
-            else{
-                client_threads.emplace_back(handle_client, socket.release(), chosen_pqc_alg, "");
-            }
+            // Move the socket into the thread context to ensure proper ownership.
+            client_threads.emplace_back(
+                [s = std::move(socket), chosen_pqc_alg, qkd_ip]() mutable {
+                    handle_client(std::move(s), chosen_pqc_alg, qkd_ip);
+                }
+            );
         }
     } catch (const std::exception &e) {
         std::cerr << "Server exception: " << e.what() << std::endl;
