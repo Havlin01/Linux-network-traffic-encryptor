@@ -1241,12 +1241,15 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) { 
-        std::cerr << "Usage: client <server_ip>\n"; 
+    if (argc < 1 || argc > 3) {
+        help();
         return 1; 
     }
     const char* srv_ip = argv[1];
-
+    std::string qkd_ip;
+    if (argc == 3) {
+        qkd_ip = argv[2];
+    }
     // --- PQC Algorithm Selection Menu ---
     int choice;
     std::string chosen_pqc_alg;
@@ -1275,7 +1278,17 @@ int main(int argc, char* argv[]) {
             // --- Trigger and perform initial rekey (BEFORE UDP handshake) ---
             const std::string init_rekey_msg = "INIT_REKEY";
             boost::asio::write(tcp_socket, boost::asio::buffer(init_rekey_msg));
-            std::vector<uint8_t> sec_key = rekey_cli(tcp_socket, "", srv_ip, "", chosen_pqc_alg);
+            
+            std::string qkd_key_buffer;
+            std::vector<uint8_t> sec_key;
+            if (!qkd_ip.empty()) {
+                qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
+                sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
+            }
+            else {
+                sec_key = rekey_cli(tcp_socket, "", srv_ip, "", chosen_pqc_alg);
+            }
+            
             std::vector<unsigned char> key_encrypt(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
             std::vector<unsigned char> key_decrypt(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
             std::cout << "Initial rekey done, keys established\n";
@@ -1318,7 +1331,15 @@ int main(int argc, char* argv[]) {
                 size_t len = tcp_socket.read_some(boost::asio::buffer(tcp_buf), ec);
                 if (!ec && len > 0) {
                     if (std::string(tcp_buf, len) == "REKEY_SERVER_INITIATED") {
-                        sec_key = rekey_cli(tcp_socket, "", srv_ip, "", chosen_pqc_alg);
+                        std::string qkd_key_buffer;
+                        if (!qkd_ip.empty()) {
+                            qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
+                            sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
+                        }
+                        else {
+                            sec_key = rekey_cli(tcp_socket, "", srv_ip, "", chosen_pqc_alg);
+                        }
+
                         key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
                         key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
                         std::cout << "Server-initiated rekey completed\n";
@@ -1332,7 +1353,16 @@ int main(int argc, char* argv[]) {
                 if (client_rekey_flag.load()) {
                     boost::asio::write(tcp_socket, boost::asio::buffer("REKEY_CLIENT_INITIATED"));
                     client_rekey_flag.store(false);
-                    sec_key = rekey_cli(tcp_socket, "", srv_ip, "", chosen_pqc_alg);
+
+                    std::string qkd_key_buffer;
+                    if (!qkd_ip.empty()) {
+                        qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
+                        sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
+                    }
+                    else {
+                        sec_key = rekey_cli(tcp_socket, "", srv_ip, "", chosen_pqc_alg);
+                    }
+
                     key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
                     key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
                     std::cout << "Client-initiated rekey completed\n";

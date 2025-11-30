@@ -1286,6 +1286,9 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         std::stringstream buffer;
         buffer << t.rdbuf();
         std::string buffer_str = buffer.str();
+        buffer_str = get_qkdkey(qkd_ip, new_socket);
+
+
 
         auto key_one = hmac_hashing_bytes(salt, pqc_key);
         auto key_two = hmac_hashing_bytes(salt, ecdh_key);
@@ -1440,8 +1443,20 @@ void handle_client(tcp::socket tcp_socket, const std::string &chosen_pqc_alg, co
 }
 
 
-int main()
+int main(int argc, char* argv[])
 {
+    std::string qkd_ip;
+    if (argc > 2)
+    {
+        help();
+        return 1;
+    }
+    if (argc == 2)
+    {
+        qkd_ip = argv[1];
+    }
+    
+
     // --- Initialize OpenSSL ---
     if (!OPENSSL_init_crypto(0, nullptr)) return 1;
     OSSL_PROVIDER *defprov = OSSL_PROVIDER_load(nullptr, "default");
@@ -1466,7 +1481,12 @@ int main()
         while (true) {
             tcp::socket socket(io_context);
             acceptor.accept(socket);
-            std::thread(handle_client, std::move(socket), chosen_pqc_alg, "").detach();
+            if(!qkd_ip.empty()){
+                std::thread(handle_client, std::move(socket), chosen_pqc_alg, qkd_ip).detach();
+            }
+            else{
+                std::thread(handle_client, std::move(socket), chosen_pqc_alg, "").detach();
+            }
         }
     } catch (const std::exception &e) {
         std::cerr << "Server exception: " << e.what() << std::endl;
