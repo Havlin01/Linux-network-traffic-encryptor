@@ -911,14 +911,14 @@ std::string get_pqckey(tcp::socket &new_socket, const std::string &alg_name)
     return pqc_key;
 }
 
-void get_qkdkey(string qkd_ip, tcp::socket &new_socket)
+string get_qkdkey(string qkd_ip, tcp::socket &new_socket)
 {
     char buffer[MAXLINE] = {0};
     boost::system::error_code ec;
     size_t len = new_socket.read_some(boost::asio::buffer(buffer), ec);
     if (ec || len == 0)
     {
-        return; // Handle error or no data
+        return ""; // Handle error or no data
     }
     std::string bufferTCP(buffer, len);
 
@@ -947,6 +947,12 @@ void get_qkdkey(string qkd_ip, tcp::socket &new_socket)
     // The original logic had a potential issue with non-printable characters.
     // Using hex representation is safer.
     qkd_parameter = pom_param + bufferTCP.substr(0, 216);
+
+    std::ifstream key_file("key");
+    std::stringstream key_buffer;
+    key_buffer << key_file.rdbuf();
+    cout << "QKD key established:" << key_buffer.str() << endl;
+    return key_buffer.str();
 }
 
 // Program usage help
@@ -1282,12 +1288,7 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
     }
     else
     {
-        std::ifstream t("key");
-        std::stringstream buffer;
-        buffer << t.rdbuf();
-        std::string buffer_str = buffer.str();
-        buffer_str = get_qkdkey(qkd_ip, new_socket);
-
+        std::string buffer_str = get_qkdkey(qkd_ip, new_socket);
 
 
         auto key_one = hmac_hashing_bytes(salt, pqc_key);
