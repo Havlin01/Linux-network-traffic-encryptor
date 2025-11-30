@@ -1293,17 +1293,9 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         return sec_key;
     }
 }
-void handle_client(tcp::socket tcp_socket, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
+void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
 {   
     std::vector<unsigned char> aes_keys;
-    // The socket's executor holds the io_context. We use any_cast to safely
-    // retrieve a pointer to it and then dereference it.
-    auto* io_context_ptr = boost::asio::any_cast<boost::asio::io_context>(&tcp_socket.get_executor().context());
-    if (!io_context_ptr) {
-        std::cerr << "Error: Could not get io_context from socket executor.\n";
-        return;
-    }
-    boost::asio::io_context& io_context = *io_context_ptr;
     udp::socket udp_socket(io_context);
     int tundesc = -1;
 
@@ -1509,8 +1501,8 @@ int main(int argc, char* argv[])
 
             // Move the socket into the thread context to ensure proper ownership.
             client_threads.emplace_back(
-                [s = std::move(socket), chosen_pqc_alg, qkd_ip]() mutable {
-                    handle_client(std::move(s), chosen_pqc_alg, qkd_ip);
+                [&io_context, s = std::move(socket), chosen_pqc_alg, qkd_ip]() mutable {
+                    handle_client(io_context, std::move(s), chosen_pqc_alg, qkd_ip);
                 }
             );
         }
