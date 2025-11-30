@@ -293,6 +293,12 @@ string data_recieve(udp::socket &socket, udp::endpoint &remote_endpoint)
     return recieved;
 }
 
+const std::string keepalive_msg_from_server = "KEEPALIVE_S";
+
+bool is_keepalive_from_server(const std::string& msg) {
+    return msg == keepalive_msg_from_server;
+}
+
 string read_tun(int tundesc)
 {
 
@@ -431,6 +437,11 @@ bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
 {
     string data;
     string encrypted_data = data_recieve(socket, remote_endpoint);
+    if (is_keepalive_from_server(encrypted_data)) {
+        // It's just a keep-alive from the server, ignore it and report no real data.
+        return false;
+    }
+
     if (encrypted_data.length() < AES_GCM_IV_LEN + TAG_SIZE + 1)
     {
         return false;
@@ -1278,6 +1289,10 @@ int main(int argc, char* argv[]) {
             udp::endpoint server_reply_ep;
             udp_socket.receive_from(boost::asio::buffer(udp_reply), server_reply_ep);
             std::cout << "Received UDP reply from server: " << std::string(udp_reply) << "\n";
+
+            const std::chrono::seconds keepalive_interval(15);
+            auto last_udp_send_time = std::chrono::steady_clock::now();
+            const std::string keepalive_msg_to_server = "KEEPALIVE_C";
             udp_socket.non_blocking(true);
 
             tcp_socket.non_blocking(true);
@@ -1340,12 +1355,25 @@ int main(int argc, char* argv[]) {
                     std::cout << "Client-initiated rekey completed\n";
                 }
 
-                if (E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc, read_order, send_order) ||
-                    D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc, read_order, send_order)) {
+                bool traffic_sent = E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc, read_order, send_order);
+                if (traffic_sent) {
+                    last_udp_send_time = std::chrono::steady_clock::now();
+                }
+
+                bool traffic_received = D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc, read_order, send_order);
+
+                if (traffic_sent || traffic_received) {
                     if (threads_available > 0) {
                         threads_available -= 1;
                         worker_threads.emplace_back(thread_encrypt, &udp_socket, server_udp_ep, &key_encrypt, &key_decrypt,
                                     tundesc, &threads_available, &read_order, &send_order);
+                    }
+                } else {
+                    // No traffic, check if we need to send a keep-alive
+                    auto now = std::chrono::steady_clock::now();
+                    if (now - last_udp_send_time > keepalive_interval) {
+                        udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_server), server_udp_ep);
+                        last_udp_send_time = now;
                     }
                 }
 
