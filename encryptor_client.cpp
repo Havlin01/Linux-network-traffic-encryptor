@@ -59,6 +59,13 @@ using std::string;
 #include <mutex>
 #include <vector>
 
+// Helper to print a snippet of a binary vector in hex for debugging
+std::string to_hex_snippet(const std::vector<uint8_t>& data, size_t len = 32);
+
+// Forward declarations for KDF helpers
+std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data);
+std::vector<uint8_t> sha3_512(const std::vector<uint8_t>& data);
+
 string xy_str;
 string kyber_cipher_data_str;
 string qkd_parameter;
@@ -551,6 +558,21 @@ std::string to_hex(const std::vector<uint8_t> &data)
 
     return ss.str();
 }
+
+std::string to_hex_snippet(const std::vector<uint8_t>& data, size_t len) {
+    std::stringstream ss;
+    ss << std::hex << std::uppercase << std::setfill('0');
+
+    size_t count = std::min(data.size(), len);
+    for (size_t i = 0; i < count; ++i) {
+        ss << std::setw(2) << static_cast<int>(data[i]);
+    }
+    if (data.size() > len) {
+        ss << "...";
+    }
+    return ss.str();
+}
+
 inline std::string to_hex(const unsigned char *data, size_t len)
 {
     std::stringstream ss;
@@ -583,10 +605,10 @@ std::vector<uint8_t> hex_to_bytes(const std::string &hex)
     return bytes;
 }
 
-std::vector<uint8_t> hmac_hashing_bytes(const std::string &salt, const std::string &key)
+std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data)
 {
     EVP_PKEY *pkey = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, nullptr,
-                                          (const unsigned char *)salt.data(), salt.size());
+                                          key.data(), key.size());
     if (!pkey)
         return {};
 
@@ -597,12 +619,12 @@ std::vector<uint8_t> hmac_hashing_bytes(const std::string &salt, const std::stri
         return {};
     }
 
-    std::vector<uint8_t> digest(EVP_MAX_MD_SIZE);
+    std::vector<uint8_t> digest;
     size_t digest_len = 0;
 
     if (EVP_DigestSignInit(ctx, nullptr, EVP_sha512(), nullptr, pkey) <= 0 ||
-        EVP_DigestSignUpdate(ctx, (const unsigned char *)key.data(), key.size()) <= 0 ||
-        EVP_DigestSignFinal(ctx, digest.data(), &digest_len) <= 0)
+        EVP_DigestSignUpdate(ctx, data.data(), data.size()) <= 0 ||
+        EVP_DigestSignFinal(ctx, NULL, &digest_len) <= 0) // First call to get length
     {
         EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
@@ -610,16 +632,19 @@ std::vector<uint8_t> hmac_hashing_bytes(const std::string &salt, const std::stri
     }
 
     digest.resize(digest_len);
+    if (EVP_DigestSignFinal(ctx, digest.data(), &digest_len) <= 0) // Second call to get data
+    {
+        EVP_MD_CTX_free(ctx);
+        EVP_PKEY_free(pkey);
+        return {};
+    }
+    digest.resize(digest_len);
     EVP_MD_CTX_free(ctx);
     EVP_PKEY_free(pkey);
-
-    return digest; // raw bytes
+    return digest;
 }
 
-std::vector<uint8_t> sha3_hashing_bytes(const std::string &key, const std::string &public_value)
-{
-    std::string concat = public_value + key;
-
+std::vector<uint8_t> sha3_512(const std::vector<uint8_t>& data) {
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (!mdctx)
         return {};
@@ -628,11 +653,11 @@ std::vector<uint8_t> sha3_hashing_bytes(const std::string &key, const std::strin
     unsigned int md_len;
 
     EVP_DigestInit_ex(mdctx, EVP_sha3_512(), nullptr);
-    EVP_DigestUpdate(mdctx, concat.data(), concat.size());
+    EVP_DigestUpdate(mdctx, data.data(), data.size());
     EVP_DigestFinal_ex(mdctx, md_value, &md_len);
     EVP_MD_CTX_free(mdctx);
 
-    return std::vector<uint8_t>(md_value, md_value + md_len); // raw bytes
+    return std::vector<uint8_t>(md_value, md_value + md_len);
 }
 
 std::vector<uint8_t> xorVectors(const std::vector<uint8_t> &a, const std::vector<uint8_t> &b)
@@ -644,8 +669,7 @@ std::vector<uint8_t> xorVectors(const std::vector<uint8_t> &a, const std::vector
     return result;
 }
 
-EVP_PKEY* create_pqc_pubkey_from_raw(const std::string& alg_name,
-                                     const std::vector<unsigned char>& raw_pkey)
+EVP_PKEY* create_pqc_pubkey_from_raw(const std::string& alg_name, const std::vector<uint8_t>& raw_pkey)
 {
     EVP_PKEY* pkey = EVP_PKEY_new_raw_public_key_ex(
         /*libctx=*/NULL,
@@ -664,14 +688,14 @@ EVP_PKEY* create_pqc_pubkey_from_raw(const std::string& alg_name,
 
 // Struct to return multiple values from key exchanges
 struct PQCKeyMaterial {
-    std::string shared_secret_hex;
-    std::string ciphertext_hex;
+    std::vector<uint8_t> shared_secret;
+    std::vector<uint8_t> ciphertext;
 };
 
 struct ECDHKeyMaterial {
-    std::string shared_secret_hex;
-    std::string own_pubkey_hex;
-    std::string peer_pubkey_hex;
+    std::vector<uint8_t> shared_secret;
+    std::vector<uint8_t> own_pubkey;
+    std::vector<uint8_t> peer_pubkey;
 };
 
 // Struct to hold PQC algorithm properties
@@ -775,64 +799,63 @@ PQC_Alg_Properties get_pqc_alg_properties(const std::string & /*alg_name_ignored
 
 PQCKeyMaterial get_pqckey(tcp::socket &client_socket, const std::string &alg_name)
 {
-    PQC_Alg_Properties props = get_pqc_alg_properties(alg_name);
-
-    std::vector<uint8_t> server_pub(props.pubkey_len);
-    std::vector<uint8_t> _shrd_key(props.shared_secret_len, 0);
-
     // 1. RECEIVE SERVER PUBKEY (framed)
     std::string server_pub_str = receive_framed_message(client_socket);
-    server_pub.assign(server_pub_str.begin(), server_pub_str.end());
-    std::cout << "Client DEBUG: received pubkey(hex) = " << to_hex(server_pub) << "\n";
+    std::vector<uint8_t> server_pub_bytes(server_pub_str.begin(), server_pub_str.end());
+    std::cout << "Client: received PQC public key (len=" << server_pub_bytes.size() << ")\n";
+    std::cout << "Client DEBUG: received pubkey(hex) = " << to_hex(server_pub_bytes) << "\n";
 
     // 2. Create server PQC public key
-    EVP_PKEY *server_pqc_pubkey = create_pqc_pubkey_from_raw(alg_name, server_pub);
+    EVP_PKEY *server_pqc_pubkey = create_pqc_pubkey_from_raw(alg_name, server_pub_bytes);
     if (!server_pqc_pubkey)
     {
         return {};
     }
 
     // 3. ENCAPSULATE
-    EVP_PKEY_CTX *ctx_encap = EVP_PKEY_CTX_new_from_pkey(NULL, server_pqc_pubkey, NULL);
-    if (!ctx_encap || 1 != EVP_PKEY_encapsulate_init(ctx_encap, NULL))
+    EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_pkey(NULL, server_pqc_pubkey, NULL);
+    if (!ctx || EVP_PKEY_encapsulate_init(ctx, NULL) != 1)
     {
+        std::cerr << "Error: EVP_PKEY_encapsulate_init failed.\n";
         ERR_print_errors_fp(stderr);
-        EVP_PKEY_CTX_free(ctx_encap);
+        if (ctx) EVP_PKEY_CTX_free(ctx);
         EVP_PKEY_free(server_pqc_pubkey);
         return {};
     }
 
     size_t ciphertext_len = 0;
     size_t shared_secret_len = 0;
-    if (1 != EVP_PKEY_encapsulate(ctx_encap, NULL, &ciphertext_len, NULL, &shared_secret_len))
+    // First call: get lengths
+    if (EVP_PKEY_encapsulate(ctx, NULL, &ciphertext_len, NULL, &shared_secret_len) != 1)
     {
+        std::cerr << "Error: EVP_PKEY_encapsulate (for length) failed.\n";
         ERR_print_errors_fp(stderr);
-        EVP_PKEY_CTX_free(ctx_encap);
+        EVP_PKEY_CTX_free(ctx);
         EVP_PKEY_free(server_pqc_pubkey);
         return {};
     }
 
-    std::vector<unsigned char> _cipher(ciphertext_len);
-    _shrd_key.resize(shared_secret_len);
+    std::vector<uint8_t> ciphertext(ciphertext_len);
+    std::vector<uint8_t> shared_secret(shared_secret_len);
 
-    if (1 != EVP_PKEY_encapsulate(ctx_encap,
-                                  _cipher.data(), &ciphertext_len,
-                                  _shrd_key.data(), &shared_secret_len))
+    // Second call: generate data
+    if (EVP_PKEY_encapsulate(ctx, ciphertext.data(), &ciphertext_len, shared_secret.data(), &shared_secret_len) != 1)
     {
+        std::cerr << "Error: EVP_PKEY_encapsulate failed.\n";
         ERR_print_errors_fp(stderr);
-        EVP_PKEY_CTX_free(ctx_encap);
+        EVP_PKEY_CTX_free(ctx);
         EVP_PKEY_free(server_pqc_pubkey);
         return {};
     }
-
-    EVP_PKEY_CTX_free(ctx_encap);
+    ciphertext.resize(ciphertext_len);
+    shared_secret.resize(shared_secret_len);
+    EVP_PKEY_CTX_free(ctx);
 
     // 4. SEND CIPHERTEXT (framed)
-    std::string cipher_str(_cipher.begin(), _cipher.end());
-    send_framed_message(client_socket, cipher_str);
+    send_framed_message(client_socket, std::string(ciphertext.begin(), ciphertext.end()));
 
     EVP_PKEY_free(server_pqc_pubkey);
-    return {to_hex(_shrd_key), to_hex(_cipher)};
+    return {shared_secret, ciphertext};
 }
 
 // Program usage help
@@ -854,7 +877,7 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
     EVP_PKEY *peer_key = nullptr;
     unsigned char *shared_secret = nullptr;
     size_t shared_secret_len = 0;
-    std::string final_shared_secret_hex;
+    std::vector<uint8_t> final_shared_secret_bytes;
 
     // 1) Generate client's ECDH key pair (secp521r1)
     pctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
@@ -1036,20 +1059,15 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
     }
 
     // 7) Hex encode shared secret
-    std::vector<uint8_t> secret_vec(shared_secret, shared_secret + shared_secret_len);
-    std::stringstream ss;
-    ss << std::hex << std::uppercase << std::setfill('0');
-    for (unsigned char byte : secret_vec)
-        ss << std::setw(2) << (int)byte;
-    final_shared_secret_hex = ss.str();
+    final_shared_secret_bytes.assign(shared_secret, shared_secret + shared_secret_len);
 
-    // 8) Cleanup
+    // 8) Cleanup and return binary data
     OPENSSL_free(shared_secret);
     EVP_PKEY_CTX_free(dctx);
     EVP_PKEY_free(peer_key);
     EVP_PKEY_free(client_key);
 
-    return {final_shared_secret_hex, to_hex(client_pub), to_hex(server_pub)};
+    return {final_shared_secret_bytes, client_pub, server_pub};
 }
 
 string xorStrings(const string &str1, const string &str2)
@@ -1144,110 +1162,150 @@ string get_qkdkey(string qkd_ip, tcp::socket &client_socket)
 */
 std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, const char *srv_ip, string buffer_str, const std::string &chosen_pqc_alg)
 {
-    std::vector<unsigned char> digest(EVP_MD_size(EVP_sha512()));
     std::vector<unsigned char> sec_key(AES_GCM_KEY_LEN * 2);
 
-    // Receive the session salt from the server (framed)
-    std::string salt = receive_framed_message(client_socket);
-    std::cout << "Received salt from server." << std::endl;
+    // 1) Receive the session salt from the server as raw bytes (framed)
+    std::string salt_str = receive_framed_message(client_socket);
+    std::vector<uint8_t> salt_bytes(salt_str.begin(), salt_str.end());
+    std::cout << "Client: received salt (len=" << salt_bytes.size() << ")\n";
+    std::cout << "DEBUG: salt(hex) = " << to_hex(salt_bytes) << std::endl;
 
-    // PQC key (framed)
+    // 2) PQC KEM: uses framing INSIDE get_pqckey
+    //    (client receives framed pubkey, responds with framed ciphertext)
     PQCKeyMaterial pqc_material = get_pqckey(client_socket, chosen_pqc_alg);
-    std::cout << "PQC key: " << pqc_material.shared_secret_hex << std::endl;
+    if (pqc_material.shared_secret.empty()) {
+        std::cerr << "Client: PQC key derivation failed.\n";
+        return {};
+    }
+    std::cout << "PQC key established.\n";
+    std::cout << "DEBUG: PQC shared secret(hex) = " << to_hex_snippet(pqc_material.shared_secret) << std::endl;
+    std::cout << "DEBUG: PQC ciphertext(hex) = " << to_hex_snippet(pqc_material.ciphertext) << std::endl;
 
     // sleep for QKD
     // std::this_thread::sleep_for(std::chrono::seconds(90));
 
-    // ECDH key (framed)
+    // 3) ECDH: uses framing INSIDE PerformECDHKeyExchange
+    //    (client sends framed pubkey, server responds with framed pubkey)
     ECDHKeyMaterial ecdh_material = PerformECDHKeyExchange(client_socket);
-    std::cout << "ECDH key: " << ecdh_material.shared_secret_hex << std::endl;
+    if (ecdh_material.shared_secret.empty()) {
+        std::cerr << "Client: ECDH key derivation failed.\n";
+        return {};
+    }
+    std::cout << "ECDH key established.\n";
+    std::cout << "DEBUG: ECDH shared secret(hex) = " << to_hex_snippet(ecdh_material.shared_secret) << std::endl;
+
     if (qkd_ip.empty())
     {
-        // First-round HMAC keys
-        auto key_one = hmac_hashing_bytes(salt, pqc_material.shared_secret_hex);
-        auto key_two = hmac_hashing_bytes(salt, ecdh_material.shared_secret_hex);
+        // --- KDF without QKD ---
+        // K1 = HMAC(salt, pqc_secret)
+        auto k1 = hmac_sha512(salt_bytes, pqc_material.shared_secret);
+        // K2 = HMAC(salt, ecdh_secret)
+        auto k2 = hmac_sha512(salt_bytes, ecdh_material.shared_secret);
 
-        // SHA3-512 parameters
-        auto param_one = sha3_hashing_bytes(pqc_material.shared_secret_hex, pqc_material.ciphertext_hex);
+        // P1 = SHA3(pqc_ciphertext || pqc_secret)
+        std::vector<uint8_t> p1_input = pqc_material.ciphertext;
+        p1_input.insert(p1_input.end(), pqc_material.shared_secret.begin(), pqc_material.shared_secret.end());
+        auto p1 = sha3_512(p1_input);
 
-        // Symmetrize the ECDH public values by concatenating them in a defined order
-        std::string ecdh_pub_values;
-        if (ecdh_material.own_pubkey_hex < ecdh_material.peer_pubkey_hex) {
-            ecdh_pub_values = ecdh_material.own_pubkey_hex + ecdh_material.peer_pubkey_hex;
+        // P2 = SHA3(own_pub || peer_pub || ecdh_secret)
+        std::vector<uint8_t> p2_input;
+        // Symmetrize by sorting public keys before concatenation (must match server)
+        if (ecdh_material.own_pubkey < ecdh_material.peer_pubkey) {
+            p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
+            p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
         } else {
-            ecdh_pub_values = ecdh_material.peer_pubkey_hex + ecdh_material.own_pubkey_hex;
+            p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
+            p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
         }
-        auto param_two = sha3_hashing_bytes(ecdh_material.shared_secret_hex, ecdh_pub_values);
+        p2_input.insert(p2_input.end(), ecdh_material.shared_secret.begin(), ecdh_material.shared_secret.end());
+        auto p2 = sha3_512(p2_input);
 
-        // Second-round HMAC keys
-        auto second_round_key_one = hmac_hashing_bytes(std::string(param_one.begin(), param_one.end()),
-                                                       std::string(key_one.begin(), key_one.end()));
-        auto second_round_key_two = hmac_hashing_bytes(std::string(param_two.begin(), param_two.end()),
-                                                       std::string(key_two.begin(), key_two.end()));
+        // S1 = HMAC(P1, K1)
+        auto s1 = hmac_sha512(p1, k1);
+        // S2 = HMAC(P2, K2)
+        auto s2 = hmac_sha512(p2, k2);
 
-        // XOR to hybrid key
-        auto hybrid_key = xorVectors(second_round_key_one, second_round_key_two);
+        // hybrid_key = XOR(S1, S2)
+        auto hybrid_key = xorVectors(s1, s2);
+        std::cout << "DEBUG: hybrid_key(hex) = " << to_hex_snippet(hybrid_key) << std::endl;
 
-        // SHA3-512 final digest
-        std::vector<uint8_t> digest(EVP_MD_size(EVP_sha3_512()));
-        EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
-        EVP_DigestInit_ex(mdctx, EVP_sha3_512(), nullptr);
-        EVP_DigestUpdate(mdctx, hybrid_key.data(), hybrid_key.size());
-        unsigned int digest_len;
-        EVP_DigestFinal_ex(mdctx, digest.data(), &digest_len);
-        EVP_MD_CTX_free(mdctx);
-        digest.resize(digest_len);
+        // final_digest = SHA3(hybrid_key)
+        auto final_digest = sha3_512(hybrid_key);
+        std::cout << "DEBUG: final_digest(hex) = " << to_hex(final_digest) << std::endl;
 
-        // Copy safely into session key
-        if (sec_key.size() > digest.size())
-            throw std::runtime_error("Session key buffer too large for derived key");
-        std::copy_n(digest.begin(), sec_key.size(), sec_key.begin());
+        if (sec_key.size() > final_digest.size()) {
+             throw std::runtime_error("Session key buffer is larger than the derived digest.");
+        }
+        std::copy_n(final_digest.begin(), sec_key.size(), sec_key.begin());
 
-        // Cleanse sensitive memory
-        OPENSSL_cleanse(digest.data(), digest.size());
+        // Cleanse all intermediate sensitive material
+        OPENSSL_cleanse(k1.data(), k1.size());
+        OPENSSL_cleanse(k2.data(), k2.size());
+        OPENSSL_cleanse(p1.data(), p1.size());
+        OPENSSL_cleanse(p2.data(), p2.size());
+        OPENSSL_cleanse(s1.data(), s1.size());
+        OPENSSL_cleanse(s2.data(), s2.size());
         OPENSSL_cleanse(hybrid_key.data(), hybrid_key.size());
-        hybrid_key.assign(hybrid_key.size(), '\0');
+        OPENSSL_cleanse(final_digest.data(), final_digest.size());
+        OPENSSL_cleanse(pqc_material.shared_secret.data(), pqc_material.shared_secret.size());
+        OPENSSL_cleanse(ecdh_material.shared_secret.data(), ecdh_material.shared_secret.size());
+
         std::cout << "Session key: " << to_hex(sec_key) << std::endl;
 
         return sec_key;
     }
     else
     {   
+        // --- KDF with QKD ---
         buffer_str = get_qkdkey(qkd_ip, client_socket);
-        // Include third QKD key
-        auto key_one = hmac_hashing_bytes(salt, pqc_material.shared_secret_hex);
-        auto key_two = hmac_hashing_bytes(salt, ecdh_material.shared_secret_hex);
-        auto key_three = hmac_hashing_bytes(salt, buffer_str);
+        std::vector<uint8_t> qkd_key_bytes(buffer_str.begin(), buffer_str.end());
+        std::vector<uint8_t> qkd_param_bytes(qkd_parameter.begin(), qkd_parameter.end());
 
-        auto param_one = sha3_hashing_bytes(pqc_material.shared_secret_hex, pqc_material.ciphertext_hex);
-        auto param_two = sha3_hashing_bytes(ecdh_material.shared_secret_hex, ecdh_material.own_pubkey_hex);
-        auto param_three = sha3_hashing_bytes(buffer_str, qkd_parameter);
+        auto k1 = hmac_sha512(salt_bytes, pqc_material.shared_secret);
+        auto k2 = hmac_sha512(salt_bytes, ecdh_material.shared_secret);
+        auto k3 = hmac_sha512(salt_bytes, qkd_key_bytes);
 
-        auto second_round_key_one = hmac_hashing_bytes(std::string(param_one.begin(), param_one.end()),
-                                                       std::string(key_one.begin(), key_one.end()));
-        auto second_round_key_two = hmac_hashing_bytes(std::string(param_two.begin(), param_two.end()),
-                                                       std::string(key_two.begin(), key_two.end()));
-        auto second_round_key_three = hmac_hashing_bytes(std::string(param_three.begin(), param_three.end()),
-                                                         std::string(key_three.begin(), key_three.end()));
+        std::vector<uint8_t> p1_input = pqc_material.ciphertext;
+        p1_input.insert(p1_input.end(), pqc_material.shared_secret.begin(), pqc_material.shared_secret.end());
+        auto p1 = sha3_512(p1_input);
 
-        auto hybrid_key = xorVectors(xorVectors(second_round_key_one, second_round_key_two), second_round_key_three);
+        std::vector<uint8_t> p2_input;
+        if (ecdh_material.own_pubkey < ecdh_material.peer_pubkey) {
+            p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
+            p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
+        } else {
+            p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
+            p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
+        }
+        p2_input.insert(p2_input.end(), ecdh_material.shared_secret.begin(), ecdh_material.shared_secret.end());
+        auto p2 = sha3_512(p2_input);
 
-        std::vector<uint8_t> digest(EVP_MD_size(EVP_sha3_512()));
-        EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
-        EVP_DigestInit_ex(mdctx, EVP_sha3_512(), nullptr);
-        EVP_DigestUpdate(mdctx, hybrid_key.data(), hybrid_key.size());
-        unsigned int digest_len;
-        EVP_DigestFinal_ex(mdctx, digest.data(), &digest_len);
-        EVP_MD_CTX_free(mdctx);
-        digest.resize(digest_len);
+        std::vector<uint8_t> p3_input = qkd_param_bytes;
+        p3_input.insert(p3_input.end(), qkd_key_bytes.begin(), qkd_key_bytes.end());
+        auto p3 = sha3_512(p3_input);
 
-        if (sec_key.size() > digest.size())
-            throw std::runtime_error("Session key buffer too large for derived key");
-        std::copy_n(digest.begin(), sec_key.size(), sec_key.begin());
+        auto s1 = hmac_sha512(p1, k1);
+        auto s2 = hmac_sha512(p2, k2);
+        auto s3 = hmac_sha512(p3, k3);
 
-        OPENSSL_cleanse(digest.data(), digest.size());
+        auto hybrid_key = xorVectors(xorVectors(s1, s2), s3);
+        auto final_digest = sha3_512(hybrid_key);
+
+        if (sec_key.size() > final_digest.size()) {
+             throw std::runtime_error("Session key buffer is larger than the derived digest.");
+        }
+        std::copy_n(final_digest.begin(), sec_key.size(), sec_key.begin());
+
+        // Cleanse
+        OPENSSL_cleanse(k1.data(), k1.size()); OPENSSL_cleanse(k2.data(), k2.size()); OPENSSL_cleanse(k3.data(), k3.size());
+        OPENSSL_cleanse(p1.data(), p1.size()); OPENSSL_cleanse(p2.data(), p2.size()); OPENSSL_cleanse(p3.data(), p3.size());
+        OPENSSL_cleanse(s1.data(), s1.size()); OPENSSL_cleanse(s2.data(), s2.size()); OPENSSL_cleanse(s3.data(), s3.size());
         OPENSSL_cleanse(hybrid_key.data(), hybrid_key.size());
-        hybrid_key.assign(hybrid_key.size(), '\0');
+        OPENSSL_cleanse(final_digest.data(), final_digest.size());
+        OPENSSL_cleanse(pqc_material.shared_secret.data(), pqc_material.shared_secret.size());
+        OPENSSL_cleanse(ecdh_material.shared_secret.data(), ecdh_material.shared_secret.size());
+        OPENSSL_cleanse(qkd_key_bytes.data(), qkd_key_bytes.size());
+
         std::cout << "Session key: " << to_hex(sec_key) << std::endl;
 
         return sec_key;
