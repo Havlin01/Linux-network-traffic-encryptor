@@ -1277,12 +1277,17 @@ int main(int argc, char* argv[]) {
             std::vector<unsigned char> key_decrypt(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
             std::cout << "Initial rekey done, keys established\n";
 
+            // Receive the dedicated UDP port from the server
+            std::string udp_port_str = receive_framed_message(tcp_socket);
+            unsigned short server_udp_port = std::stoi(udp_port_str);
+            std::cout << "Server assigned dedicated UDP port: " << server_udp_port << std::endl;
+
             udp::socket udp_socket(io_context);
             udp::resolver udp_resolver(io_context);
-            udp::endpoint server_udp_ep = *udp_resolver.resolve(udp::v4(), srv_ip, std::to_string(PORT)).begin();
+            udp::endpoint server_udp_ep = *udp_resolver.resolve(udp::v4(), srv_ip, std::to_string(server_udp_port)).begin();
             udp_socket.open(udp::v4());
 
-            udp_socket.send_to(boost::asio::buffer("Hello from client UDP"), server_udp_ep);
+            udp_socket.send_to(boost::asio::buffer("Hello from client UDP"), server_udp_ep, 0, ec);
             std::cout << "Client UDP hello sent\n";
 
             char udp_reply[1024] = {0};

@@ -1293,7 +1293,7 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         return sec_key;
     }
 }
-void handle_client(tcp::socket tcp_socket, udp::socket& udp_socket, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
+void handle_client(tcp::socket tcp_socket, boost::asio::io_context& io_context, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
 {   
     std::vector<unsigned char> aes_keys;
     try {
@@ -1320,8 +1320,18 @@ void handle_client(tcp::socket tcp_socket, udp::socket& udp_socket, const std::s
             return;
         }
 
-        // Temporarily set to blocking for the initial UDP handshake.
-        udp_socket.non_blocking(false);
+        // Create a dedicated UDP socket for this client on an ephemeral port
+        udp::socket udp_socket(io_context, udp::endpoint(udp::v4(), 0));
+        udp::endpoint client_udp_ep;
+        unsigned short udp_port = udp_socket.local_endpoint().port();
+        std::cout << "Client " << tcp_socket.remote_endpoint().address() 
+                  << " assigned to dedicated UDP port: " << udp_port << std::endl;
+
+        // Send the new UDP port to the client over TCP
+        std::string port_msg = std::to_string(udp_port);
+        send_framed_message(tcp_socket, port_msg);
+
+        // Now perform the handshake on the dedicated socket (can be blocking)
 
         char udp_buf[1024];
         udp::endpoint client_udp_ep;
@@ -1334,7 +1344,6 @@ void handle_client(tcp::socket tcp_socket, udp::socket& udp_socket, const std::s
 
         tcp_socket.non_blocking(true);
         udp_socket.non_blocking(true);
-
 
         std::atomic<int> read_order(1), send_order(1);
         int tundesc = tun_open();
@@ -1403,6 +1412,7 @@ void handle_client(tcp::socket tcp_socket, udp::socket& udp_socket, const std::s
 
         close(tundesc);
         tcp_socket.close();
+        udp_socket.close();
     }
     catch (const std::exception &e) {
         std::cerr << "Server exception: " << e.what() << "\n";
@@ -1454,23 +1464,20 @@ int main(int argc, char* argv[])
         tcp::acceptor acceptor(io_context, tcp::endpoint(tcp::v4(), KEYPORT));
         std::cout << "Server TCP listening on port " << KEYPORT << std::endl;
 
-        udp::socket udp_socket(io_context, udp::endpoint(udp::v4(), PORT));
-        std::cout << "Server UDP listening on port " << PORT << std::endl;
-
         std::vector<std::thread> client_threads;
 
         while (true) {
             tcp::socket socket(io_context);
             acceptor.accept(socket);
 
-            // Periodically clean up finished threads
             reap_threads(client_threads);
 
+            // Pass the io_context by reference so the thread can create its own sockets
             if(!qkd_ip.empty()){
-                client_threads.emplace_back(handle_client, std::move(socket), std::ref(udp_socket), chosen_pqc_alg, qkd_ip);
+                client_threads.emplace_back(handle_client, std::move(socket), std::ref(io_context), chosen_pqc_alg, qkd_ip);
             }
             else{
-                client_threads.emplace_back(handle_client, std::move(socket), std::ref(udp_socket), chosen_pqc_alg, "");
+                client_threads.emplace_back(handle_client, std::move(socket), std::ref(io_context), chosen_pqc_alg, "");
             }
         }
     } catch (const std::exception &e) {
