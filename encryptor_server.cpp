@@ -1422,6 +1422,10 @@ void handle_client(tcp::socket tcp_socket, udp::socket& udp_socket, const std::s
         }
 
         // --- 4. Open UDP socket and handshake ---
+        // Temporarily set the socket to blocking for the initial handshake
+        // to ensure we wait for the client's first UDP packet.
+        udp_socket.non_blocking(false);
+
         char udp_buf[1024];
         udp::endpoint client_udp_ep;
         size_t len = udp_socket.receive_from(boost::asio::buffer(udp_buf), client_udp_ep);
@@ -1431,8 +1435,9 @@ void handle_client(tcp::socket tcp_socket, udp::socket& udp_socket, const std::s
         udp_socket.send_to(boost::asio::buffer(reply), client_udp_ep);
         std::cout << "Server replied to UDP\n";
 
-        // Set sockets to non-blocking for the main loop
+        // Set both sockets to non-blocking for the main data transfer loop
         tcp_socket.non_blocking(true);
+        udp_socket.non_blocking(true);
 
         // --- 5. Main loop: handle further TCP commands ---
         std::atomic<int> read_order(1), send_order(1);
@@ -1535,7 +1540,6 @@ int main(int argc, char* argv[])
 
         // Create a single UDP socket for all clients
         udp::socket udp_socket(io_context, udp::endpoint(udp::v4(), PORT));
-        udp_socket.non_blocking(true);
         std::cout << "Server UDP listening on port " << PORT << std::endl;
 
         while (true) {
