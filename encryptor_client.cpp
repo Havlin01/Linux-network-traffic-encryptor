@@ -59,10 +59,8 @@ using std::string;
 #include <mutex>
 #include <vector>
 
-// Helper to print a snippet of a binary vector in hex for debugging
 std::string to_hex_snippet(const std::vector<uint8_t>& data, size_t len = 32);
 
-// Forward declarations for KDF helpers
 std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data);
 std::vector<uint8_t> sha3_512(const std::vector<uint8_t>& data);
 
@@ -70,10 +68,6 @@ string xy_str;
 string kyber_cipher_data_str;
 string qkd_parameter;
 std::mutex m1;
-
-/*
-   Get encryption order after reading from tun interface
-*/
 
 int get_order(std::atomic<int> &read_order)
 {
@@ -84,15 +78,13 @@ int get_order(std::atomic<int> &read_order)
     return order;
 }
 
-// Helper function to send a length-prefixed message
 void send_framed_message(tcp::socket &socket, const std::string &msg)
 {
-    uint32_t msg_len = htonl(msg.length()); // Ensure network byte order
+    uint32_t msg_len = htonl(msg.length());
     boost::asio::write(socket, boost::asio::buffer(&msg_len, sizeof(msg_len)));
     boost::asio::write(socket, boost::asio::buffer(msg));
 }
 
-// Helper function to receive a length-prefixed message
 std::string receive_framed_message(tcp::socket &socket)
 {
     uint32_t msg_len;
@@ -102,7 +94,7 @@ std::string receive_framed_message(tcp::socket &socket)
     {
         throw boost::system::system_error(ec);
     }
-    msg_len = ntohl(msg_len); // Convert from network to host byte order
+    msg_len = ntohl(msg_len);
 
     if (msg_len > MAXLINE)
     { // Sanity check
@@ -120,7 +112,6 @@ void cert_authenticate_online(const char *srv_ip)
     SSL *ssl;
     BIO *bio;
 
-    // Create SSL context
     ctx = SSL_CTX_new(SSLv23_client_method());
     if (ctx == NULL)
     {
@@ -128,14 +119,12 @@ void cert_authenticate_online(const char *srv_ip)
         exit(EXIT_FAILURE);
     }
 
-    // Configure SSL context to use the certificate of the CA
     if (SSL_CTX_load_verify_locations(ctx, SERVER_CA_CERT, NULL) != 1)
     {
         printf("Error while loading a server CA certificate.\n");
         exit(EXIT_FAILURE);
     }
 
-    // Create SSL connection
     ssl = SSL_new(ctx);
     if (ssl == NULL)
     {
@@ -143,7 +132,6 @@ void cert_authenticate_online(const char *srv_ip)
         exit(EXIT_FAILURE);
     }
 
-    // Create BIO object
     bio = BIO_new_ssl_connect(ctx);
     if (bio == NULL)
     {
@@ -152,21 +140,17 @@ void cert_authenticate_online(const char *srv_ip)
     }
 
     string hostname = srv_ip + string(":") + string("61000");
-    // Set hostname
     BIO_set_conn_hostname(bio, hostname.c_str());
 
-    // Connect BIO object to SSL
     BIO_get_ssl(bio, &ssl);
     SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
 
-    // Open connection
     if (BIO_do_connect(bio) <= 0)
     {
         printf("Connection error.\n");
         exit(EXIT_FAILURE);
     }
 
-    // Validate server certificate
     if (SSL_get_verify_result(ssl) != X509_V_OK)
     {
         printf("Error while verifying the certificate.\n");
@@ -186,7 +170,6 @@ void cert_authenticate_offline()
     X509_STORE *store = NULL;
     X509_STORE_CTX *ctx = NULL;
 
-    // Load server's certificate
     FILE *file = fopen(VALIDATE_CERT, "r");
     if (!file)
     {
@@ -201,7 +184,6 @@ void cert_authenticate_offline()
         exit(EXIT_FAILURE);
     }
 
-    // Load CA certificate
     file = fopen(SERVER_CA_CERT, "r");
     if (!file)
     {
@@ -218,7 +200,6 @@ void cert_authenticate_offline()
         exit(EXIT_FAILURE);
     }
 
-    // Create X509_STORE and add CA certificate
     store = X509_STORE_new();
     if (!store || X509_STORE_add_cert(store, caCert) != 1)
     {
@@ -229,10 +210,6 @@ void cert_authenticate_offline()
         exit(EXIT_FAILURE);
     }
 
-    // Set the trusted certificate store to verify against
-    // Skipping the verification step that checks for a trusted issuer
-    // X509_STORE_set_flags(store, X509_V_FLAG_ALLOW_SELF_SIGNED);
-    // Create X509_STORE_CTX
     ctx = X509_STORE_CTX_new();
     if (!ctx || X509_STORE_CTX_init(ctx, store, serverCert, NULL) != 1)
     {
@@ -263,7 +240,6 @@ void cert_authenticate_offline()
         }
     }
 
-    // Clean up
     X509_free(serverCert);
     X509_free(caCert);
     X509_STORE_CTX_free(ctx);
@@ -276,7 +252,6 @@ string convertToString(char *a)
     return s;
 }
 
-// Virtual interface access
 int tun_open()
 {
     struct ifreq ifr;
@@ -301,7 +276,6 @@ int tun_open()
     return fd;
 }
 
-// Encrypted data recieve
 string data_recieve(udp::socket &socket, udp::endpoint &remote_endpoint)
 {
 
@@ -319,7 +293,6 @@ string data_recieve(udp::socket &socket, udp::endpoint &remote_endpoint)
     return recieved;
 }
 
-// Virtual interface data read
 string read_tun(int tundesc)
 {
 
@@ -343,13 +316,11 @@ void write_tun(int tundesc, string message)
     write(tundesc, message.data(), message.length());
 }
 
-// Send encrypted data
 void send_encrypted(udp::socket &socket, udp::endpoint &remote_endpoint, const string &cipher)
 {
     socket.send_to(boost::asio::buffer(cipher), remote_endpoint);
 }
 
-// Data encryption
 string encrypt_data(const std::vector<unsigned char> &key, const string &plaintext)
 {
     EVP_CIPHER_CTX *ctx;
@@ -359,7 +330,6 @@ string encrypt_data(const std::vector<unsigned char> &key, const string &plainte
     std::vector<unsigned char> ciphertext(plaintext.length());
     std::vector<unsigned char> tag(TAG_SIZE);
 
-    // Generate a random IV
     if (1 != RAND_bytes(iv.data(), iv.size()))
     {
         std::cerr << "Error: Failed to generate IV." << std::endl;
@@ -406,7 +376,6 @@ string encrypt_data(const std::vector<unsigned char> &key, const string &plainte
     return result;
 }
 
-// Data decryption + integrity check
 string decrypt_data(const std::vector<unsigned char> &key, const string &cipher_with_iv_tag)
 {
     if (cipher_with_iv_tag.length() < AES_GCM_IV_LEN + TAG_SIZE)
@@ -455,19 +424,13 @@ string decrypt_data(const std::vector<unsigned char> &key, const string &cipher_
 }
 
 /*
-   Aggregation of functions needed for data recieve:
-   1) Receive incoming encrypted data
-   2) Decrypt data and check integrity
-   3) Write decrypted data to virtual interface
-
+   Receives, decrypts, and writes data to the TUN interface.
    Returns false if there are no more data available on socket.
 */
-
 bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc, std::atomic<int> &read_order, std::atomic<int> &send_order)
 {
     string data;
     string encrypted_data = data_recieve(socket, remote_endpoint);
-    // Encrypted data should be at least 33 char long (16B nonce, 16B auth tag)
     if (encrypted_data.length() < AES_GCM_IV_LEN + TAG_SIZE + 1)
     {
         return false;
@@ -496,14 +459,9 @@ bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
 }
 
 /*
-   Aggregation of functions needed for encryption and data send:
-   1) Read data from virtual interface
-   2) Encrypt data
-   3) Send encrypted data
-
+   Reads from the TUN interface, encrypts, and sends data.
    Returns false if there are no more data available on virtual interface.
 */
-
 bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc, std::atomic<int> &read_order, std::atomic<int> &send_order)
 {
     string data = read_tun(tundesc);
@@ -525,7 +483,6 @@ bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
     return true;
 }
 
-// Thread function for both encryption and decryption
 void thread_encrypt(udp::socket *socket, udp::endpoint remote_endpoint, const std::vector<unsigned char> *key_encrypt, const std::vector<unsigned char> *key_decrypt, int tundesc, std::atomic<int> *threads, std::atomic<int> *read_order, std::atomic<int> *send_order)
 {
     for (int i = 0; i < 100; i++)
@@ -543,16 +500,12 @@ void thread_encrypt(udp::socket *socket, udp::endpoint remote_endpoint, const st
 
 std::string to_hex(const std::vector<uint8_t> &data)
 {
-    // Use std::stringstream for efficient string construction
     std::stringstream ss;
 
-    // Set formatting for uppercase hexadecimal output, padded with '0'
     ss << std::hex << std::uppercase << std::setfill('0');
 
     for (uint8_t byte : data)
     {
-        // Cast to int is necessary to avoid treating uint8_t as a character
-        // when streaming, ensuring it is formatted as a number.
         ss << std::setw(2) << (int)byte;
     }
 
@@ -686,7 +639,6 @@ EVP_PKEY* create_pqc_pubkey_from_raw(const std::string& alg_name, const std::vec
     return pkey;
 }
 
-// Struct to return multiple values from key exchanges
 struct PQCKeyMaterial {
     std::vector<uint8_t> shared_secret;
     std::vector<uint8_t> ciphertext;
@@ -698,7 +650,6 @@ struct ECDHKeyMaterial {
     std::vector<uint8_t> peer_pubkey;
 };
 
-// Struct to hold PQC algorithm properties
 struct PQC_Alg_Properties
 {
     size_t shared_secret_len = 0;
@@ -711,7 +662,6 @@ PQC_Alg_Properties get_pqc_alg_properties(const std::string & /*alg_name_ignored
     const char *alg = "ML-KEM-768";
     PQC_Alg_Properties props{};
 
-    // 1) Make sure the KEM exists
     EVP_KEM *kem = EVP_KEM_fetch(NULL, alg, NULL);
     if (!kem)
     {
@@ -719,9 +669,8 @@ PQC_Alg_Properties get_pqc_alg_properties(const std::string & /*alg_name_ignored
         ERR_print_errors_fp(stderr);
         throw std::runtime_error("KEM not present for: " + std::string(alg));
     }
-    EVP_KEM_free(kem); // we only needed to check presence
+    EVP_KEM_free(kem);
 
-    // 2) Generate a throwaway keypair via PKEY API
     EVP_PKEY *pkey = EVP_PKEY_Q_keygen(NULL, NULL, alg);
     if (!pkey)
     {
@@ -730,7 +679,6 @@ PQC_Alg_Properties get_pqc_alg_properties(const std::string & /*alg_name_ignored
         throw std::runtime_error("Failed to keygen for: " + std::string(alg));
     }
 
-    // 3) Get public key length by exporting raw pubkey
     size_t pub_len = 0;
     if (EVP_PKEY_get_octet_string_param(
             pkey,
@@ -757,7 +705,6 @@ PQC_Alg_Properties get_pqc_alg_properties(const std::string & /*alg_name_ignored
     }
     props.pubkey_len = pub_len;
 
-    // 4) Trial encapsulation to discover ct + shared secret lengths
     EVP_PKEY_CTX *ctx_enc = EVP_PKEY_CTX_new_from_pkey(NULL, pkey, NULL);
     if (!ctx_enc)
     {
@@ -795,24 +742,19 @@ PQC_Alg_Properties get_pqc_alg_properties(const std::string & /*alg_name_ignored
     return props;
 }
 
-// --- THE UPDATED FUNCTION BLOCK ---
-
 PQCKeyMaterial get_pqckey(tcp::socket &client_socket, const std::string &alg_name)
 {
-    // 1. RECEIVE SERVER PUBKEY (framed)
     std::string server_pub_str = receive_framed_message(client_socket);
     std::vector<uint8_t> server_pub_bytes(server_pub_str.begin(), server_pub_str.end());
     std::cout << "Client: received PQC public key (len=" << server_pub_bytes.size() << ")\n";
     std::cout << "Client DEBUG: received pubkey(hex) = " << to_hex(server_pub_bytes) << "\n";
 
-    // 2. Create server PQC public key
     EVP_PKEY *server_pqc_pubkey = create_pqc_pubkey_from_raw(alg_name, server_pub_bytes);
     if (!server_pqc_pubkey)
     {
         return {};
     }
 
-    // 3. ENCAPSULATE
     EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_pkey(NULL, server_pqc_pubkey, NULL);
     if (!ctx || EVP_PKEY_encapsulate_init(ctx, NULL) != 1)
     {
@@ -825,7 +767,6 @@ PQCKeyMaterial get_pqckey(tcp::socket &client_socket, const std::string &alg_nam
 
     size_t ciphertext_len = 0;
     size_t shared_secret_len = 0;
-    // First call: get lengths
     if (EVP_PKEY_encapsulate(ctx, NULL, &ciphertext_len, NULL, &shared_secret_len) != 1)
     {
         std::cerr << "Error: EVP_PKEY_encapsulate (for length) failed.\n";
@@ -838,7 +779,6 @@ PQCKeyMaterial get_pqckey(tcp::socket &client_socket, const std::string &alg_nam
     std::vector<uint8_t> ciphertext(ciphertext_len);
     std::vector<uint8_t> shared_secret(shared_secret_len);
 
-    // Second call: generate data
     if (EVP_PKEY_encapsulate(ctx, ciphertext.data(), &ciphertext_len, shared_secret.data(), &shared_secret_len) != 1)
     {
         std::cerr << "Error: EVP_PKEY_encapsulate failed.\n";
@@ -851,14 +791,12 @@ PQCKeyMaterial get_pqckey(tcp::socket &client_socket, const std::string &alg_nam
     shared_secret.resize(shared_secret_len);
     EVP_PKEY_CTX_free(ctx);
 
-    // 4. SEND CIPHERTEXT (framed)
     send_framed_message(client_socket, std::string(ciphertext.begin(), ciphertext.end()));
 
     EVP_PKEY_free(server_pqc_pubkey);
     return {shared_secret, ciphertext};
 }
 
-// Program usage help
 void help()
 {
     cout << endl
@@ -879,7 +817,6 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
     size_t shared_secret_len = 0;
     std::vector<uint8_t> final_shared_secret_bytes;
 
-    // 1) Generate client's ECDH key pair (secp521r1)
     pctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
     if (!pctx ||
         EVP_PKEY_keygen_init(pctx) <= 0 ||
@@ -895,7 +832,6 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
     EVP_PKEY_CTX_free(pctx);
     pctx = nullptr;
 
-    // 2) Export client's raw public key (octet string)
     size_t client_pub_len = 0;
     if (EVP_PKEY_get_octet_string_param(client_key, OSSL_PKEY_PARAM_PUB_KEY, NULL, 0, &client_pub_len) != 1)
     {
@@ -914,7 +850,6 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
         return {};
     }
 
-    // Optional debug
     std::cout << "Client DEBUG: sending ECDH pub len=" << client_pub.size() << std::endl;
     if (!client_pub.empty())
     {
@@ -925,7 +860,6 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
         std::cout << "Client DEBUG: client_pub snippet(hex) = " << to_hex(snippet) << std::endl;
     }
 
-    // 3) Send client's public key (framed)
     try
     {
         send_framed_message(sock, std::string(client_pub.begin(), client_pub.end()));
@@ -937,7 +871,6 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
         return {};
     }
 
-    // 4) Receive server's public key (framed)
     std::string server_pub_str;
     try
     {
@@ -960,7 +893,6 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
         std::cout << "Client DEBUG: server_pub snippet(hex) = " << to_hex(snippet) << std::endl;
     }
 
-    // Basic sanity check: length should be 133 for secp521r1 uncompressed
     const size_t expected_len = 1 + 2 * ((521 + 7) / 8); // 133
     if (server_pub.size() != expected_len)
     {
@@ -970,7 +902,6 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
         return {};
     }
 
-    // 5) Create peer EVP_PKEY from server raw EC point using EVP_PKEY_fromdata
     EVP_PKEY_CTX *fromctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
     if (!fromctx)
     {
@@ -1005,7 +936,6 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
     }
     EVP_PKEY_CTX_free(fromctx);
 
-    // 6) Derive shared secret
     EVP_PKEY_CTX *dctx = EVP_PKEY_CTX_new_from_pkey(NULL, client_key, NULL);
     if (!dctx)
     {
@@ -1058,10 +988,8 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
         return {};
     }
 
-    // 7) Hex encode shared secret
     final_shared_secret_bytes.assign(shared_secret, shared_secret + shared_secret_len);
 
-    // 8) Cleanup and return binary data
     OPENSSL_free(shared_secret);
     EVP_PKEY_CTX_free(dctx);
     EVP_PKEY_free(peer_key);
@@ -1072,7 +1000,6 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
 
 string xorStrings(const string &str1, const string &str2)
 {
-    // Handle hex strings by converting to bytes, XORing, then converting back
     std::vector<uint8_t> bytes1 = hex_to_bytes(str1);
     std::vector<uint8_t> bytes2 = hex_to_bytes(str2);
 
@@ -1085,7 +1012,6 @@ string xorStrings(const string &str1, const string &str2)
         result_bytes.push_back(bytes1[i] ^ bytes2[i]);
     }
 
-    // Use the global to_hex logic
     std::stringstream ss;
     ss << std::hex << std::uppercase << std::setfill('0');
     for (unsigned char byte : result_bytes)
@@ -1115,13 +1041,11 @@ string get_qkdkey(string qkd_ip, tcp::socket &client_socket)
     std::ifstream t("key");
     std::stringstream buffer;
     buffer << t.rdbuf();
-    // buffer to string
     string buffer_str = buffer.str();
 
     std::ifstream s("keyID");
     std::stringstream bufferTCP;
     bufferTCP << s.rdbuf();
-    // bufferTCP to string
     string bufferTCP_str = bufferTCP.str();
     cout << "KeyID: " << bufferTCP_str << endl;
 
@@ -1136,7 +1060,6 @@ string get_qkdkey(string qkd_ip, tcp::socket &client_socket)
     EVP_DigestFinalXOF(mdctx, shake_output.data(), shake_output.size());
     EVP_MD_CTX_free(mdctx);
 
-    // Use the global to_hex logic
     std::stringstream ss;
     ss << std::hex << std::uppercase << std::setfill('0');
     for (unsigned char byte : shake_output)
@@ -1145,7 +1068,6 @@ string get_qkdkey(string qkd_ip, tcp::socket &client_socket)
     }
     string pom_param = ss.str();
 
-    // The original logic had a potential issue with non-printable characters.
     qkd_parameter = pom_param + bufferTCP_str.substr(0, 216);
 
     boost::asio::write(client_socket, boost::asio::buffer(bufferTCP_str));
@@ -1155,23 +1077,18 @@ string get_qkdkey(string qkd_ip, tcp::socket &client_socket)
 }
 
 /*
-   Rekeying - client mode
-
-   Client get new key from QKD server, combine it with PQC key
-   and than send its ID to gateway in server mode.
+   Performs a full hybrid key exchange (PQC + ECDH + optional QKD)
+   and derives a new session key.
 */
 std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, const char *srv_ip, string buffer_str, const std::string &chosen_pqc_alg)
 {
     std::vector<unsigned char> sec_key(AES_GCM_KEY_LEN * 2);
 
-    // 1) Receive the session salt from the server as raw bytes (framed)
     std::string salt_str = receive_framed_message(client_socket);
     std::vector<uint8_t> salt_bytes(salt_str.begin(), salt_str.end());
     std::cout << "Client: received salt (len=" << salt_bytes.size() << ")\n";
     std::cout << "DEBUG: salt(hex) = " << to_hex(salt_bytes) << std::endl;
 
-    // 2) PQC KEM: uses framing INSIDE get_pqckey
-    //    (client receives framed pubkey, responds with framed ciphertext)
     PQCKeyMaterial pqc_material = get_pqckey(client_socket, chosen_pqc_alg);
     if (pqc_material.shared_secret.empty()) {
         std::cerr << "Client: PQC key derivation failed.\n";
@@ -1181,11 +1098,6 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     std::cout << "DEBUG: PQC shared secret(hex) = " << to_hex_snippet(pqc_material.shared_secret) << std::endl;
     std::cout << "DEBUG: PQC ciphertext(hex) = " << to_hex_snippet(pqc_material.ciphertext) << std::endl;
 
-    // sleep for QKD
-    // std::this_thread::sleep_for(std::chrono::seconds(90));
-
-    // 3) ECDH: uses framing INSIDE PerformECDHKeyExchange
-    //    (client sends framed pubkey, server responds with framed pubkey)
     ECDHKeyMaterial ecdh_material = PerformECDHKeyExchange(client_socket);
     if (ecdh_material.shared_secret.empty()) {
         std::cerr << "Client: ECDH key derivation failed.\n";
@@ -1196,20 +1108,14 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
 
     if (qkd_ip.empty())
     {
-        // --- KDF without QKD ---
-        // K1 = HMAC(salt, pqc_secret)
         auto k1 = hmac_sha512(salt_bytes, pqc_material.shared_secret);
-        // K2 = HMAC(salt, ecdh_secret)
         auto k2 = hmac_sha512(salt_bytes, ecdh_material.shared_secret);
 
-        // P1 = SHA3(pqc_ciphertext || pqc_secret)
         std::vector<uint8_t> p1_input = pqc_material.ciphertext;
         p1_input.insert(p1_input.end(), pqc_material.shared_secret.begin(), pqc_material.shared_secret.end());
         auto p1 = sha3_512(p1_input);
 
-        // P2 = SHA3(own_pub || peer_pub || ecdh_secret)
         std::vector<uint8_t> p2_input;
-        // Symmetrize by sorting public keys before concatenation (must match server)
         if (ecdh_material.own_pubkey < ecdh_material.peer_pubkey) {
             p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
             p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
@@ -1220,16 +1126,12 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
         p2_input.insert(p2_input.end(), ecdh_material.shared_secret.begin(), ecdh_material.shared_secret.end());
         auto p2 = sha3_512(p2_input);
 
-        // S1 = HMAC(P1, K1)
         auto s1 = hmac_sha512(p1, k1);
-        // S2 = HMAC(P2, K2)
         auto s2 = hmac_sha512(p2, k2);
 
-        // hybrid_key = XOR(S1, S2)
         auto hybrid_key = xorVectors(s1, s2);
         std::cout << "DEBUG: hybrid_key(hex) = " << to_hex_snippet(hybrid_key) << std::endl;
 
-        // final_digest = SHA3(hybrid_key)
         auto final_digest = sha3_512(hybrid_key);
         std::cout << "DEBUG: final_digest(hex) = " << to_hex(final_digest) << std::endl;
 
@@ -1238,7 +1140,6 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
         }
         std::copy_n(final_digest.begin(), sec_key.size(), sec_key.begin());
 
-        // Cleanse all intermediate sensitive material
         OPENSSL_cleanse(k1.data(), k1.size());
         OPENSSL_cleanse(k2.data(), k2.size());
         OPENSSL_cleanse(p1.data(), p1.size());
@@ -1256,7 +1157,6 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     }
     else
     {   
-        // --- KDF with QKD ---
         buffer_str = get_qkdkey(qkd_ip, client_socket);
         std::vector<uint8_t> qkd_key_bytes(buffer_str.begin(), buffer_str.end());
         std::vector<uint8_t> qkd_param_bytes(qkd_parameter.begin(), qkd_parameter.end());
@@ -1296,7 +1196,6 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
         }
         std::copy_n(final_digest.begin(), sec_key.size(), sec_key.begin());
 
-        // Cleanse
         OPENSSL_cleanse(k1.data(), k1.size()); OPENSSL_cleanse(k2.data(), k2.size()); OPENSSL_cleanse(k3.data(), k3.size());
         OPENSSL_cleanse(p1.data(), p1.size()); OPENSSL_cleanse(p2.data(), p2.size()); OPENSSL_cleanse(p3.data(), p3.size());
         OPENSSL_cleanse(s1.data(), s1.size()); OPENSSL_cleanse(s2.data(), s2.size()); OPENSSL_cleanse(s3.data(), s3.size());
@@ -1322,7 +1221,6 @@ int main(int argc, char* argv[]) {
     if (argc == 3) {
         qkd_ip = argv[2];
     }
-    // --- PQC Algorithm Selection Menu ---
     int choice;
     std::string chosen_pqc_alg;
     std::cout << "Choose PQC Algorithm:\n1. MLKEM768 (Kyber768)\n2. HQC-128\nEnter choice: ";
@@ -1342,12 +1240,10 @@ int main(int argc, char* argv[]) {
             boost::asio::connect(tcp_socket, resolver.resolve(srv_ip, std::to_string(KEYPORT)));
             std::cout << "Connected to server\n";
 
-            // --- Wait for READY from server ---
             char ready_buf[5] = {0};
             boost::asio::read(tcp_socket, boost::asio::buffer(ready_buf, 5));
             std::cout << "Server READY received\n";
 
-            // --- Trigger and perform initial rekey (BEFORE UDP handshake) ---
             const std::string init_rekey_msg = "INIT_REKEY";
             boost::asio::write(tcp_socket, boost::asio::buffer(init_rekey_msg));
             std::string qkd_key_buffer;
@@ -1363,7 +1259,6 @@ int main(int argc, char* argv[]) {
             std::vector<unsigned char> key_decrypt(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
             std::cout << "Initial rekey done, keys established\n";
 
-            // --- Now, open UDP socket and handshake ---
             udp::socket udp_socket(io_context);
             udp::resolver udp_resolver(io_context);
             udp::endpoint server_udp_ep = *udp_resolver.resolve(udp::v4(), srv_ip, std::to_string(PORT)).begin();
@@ -1378,8 +1273,7 @@ int main(int argc, char* argv[]) {
             std::cout << "Received UDP reply from server: " << std::string(udp_reply) << "\n";
             udp_socket.non_blocking(true);
 
-            tcp_socket.non_blocking(true); // Set TCP socket to non-blocking for the main loop
-            // --- Threading and tun interface ---
+            tcp_socket.non_blocking(true);
             std::atomic<int> read_order = 0, send_order = 1;
             int tundesc = tun_open();
             int threads_max = std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1;
@@ -1393,9 +1287,7 @@ int main(int argc, char* argv[]) {
                 }
             }).detach();
 
-            // --- Main loop: encryption/decryption and rekey handling ---
             while (true) {
-                // TCP check
                 boost::system::error_code ec;
                 char tcp_buf[1024] = {0};
                 size_t len = tcp_socket.read_some(boost::asio::buffer(tcp_buf), ec);
@@ -1416,10 +1308,9 @@ int main(int argc, char* argv[]) {
                     }
                 } else if (ec != boost::asio::error::would_block) {
                     std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
-                    break; // Exit loop on error
+                    break;
                 }
 
-                // Client-initiated rekey
                 if (client_rekey_flag.load()) {
                     boost::asio::write(tcp_socket, boost::asio::buffer("REKEY_CLIENT_INITIATED"));
                     client_rekey_flag.store(false);
@@ -1438,7 +1329,6 @@ int main(int argc, char* argv[]) {
                     std::cout << "Client-initiated rekey completed\n";
                 }
 
-                // Encryption/decryption
                 if (E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc, read_order, send_order) ||
                     D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc, read_order, send_order)) {
                     if (threads_available > 0) {
@@ -1448,7 +1338,6 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                // If no work was done, pause briefly to prevent busy-spinning
                 if (threads_available == threads_max) {
                     fd_set fds;
                     FD_ZERO(&fds);
@@ -1457,7 +1346,6 @@ int main(int argc, char* argv[]) {
                     FD_SET(udp_native, &fds);
                     struct timeval tv = {0, 1000}; // 1ms timeout
                     int max_fd = std::max(tundesc, udp_native);
-                    // Wait for activity on tun or udp socket
                     select(max_fd + 1, &fds, NULL, NULL, &tv);
                 }
             }
