@@ -1198,7 +1198,9 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
         return sec_key;
     }
     else
-    {
+    {   
+        std::string qkd_key_buffer;
+        qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
         // Include third QKD key
         auto key_one = hmac_hashing_bytes(salt, pqc_key);
         auto key_two = hmac_hashing_bytes(salt, ecdh_key);
@@ -1279,10 +1281,8 @@ int main(int argc, char* argv[]) {
             const std::string init_rekey_msg = "INIT_REKEY";
             boost::asio::write(tcp_socket, boost::asio::buffer(init_rekey_msg));
             
-            std::string qkd_key_buffer;
             std::vector<uint8_t> sec_key;
             if (!qkd_ip.empty()) {
-                qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
                 sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
             }
             else {
