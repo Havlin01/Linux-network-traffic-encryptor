@@ -1477,10 +1477,10 @@ int main(int argc, char* argv[])
             reap_threads(client_threads);
 
             if(!qkd_ip.empty()){
-                client_threads.emplace_back(handle_client, socket.native_handle(), chosen_pqc_alg, qkd_ip);
+                client_threads.emplace_back(handle_client, socket.release(), chosen_pqc_alg, qkd_ip);
             }
             else{
-                client_threads.emplace_back(handle_client, socket.native_handle(), chosen_pqc_alg, "");
+                client_threads.emplace_back(handle_client, socket.release(), chosen_pqc_alg, "");
             }
         }
     } catch (const std::exception &e) {
