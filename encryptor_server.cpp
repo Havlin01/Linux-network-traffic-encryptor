@@ -857,6 +857,7 @@ struct PQCKeyMaterial {
 struct ECDHKeyMaterial {
     std::string shared_secret_hex;
     std::string peer_pubkey_hex;
+    std::string own_pubkey_hex;
 };
 
 // Server-side PQC key exchange
@@ -1172,7 +1173,7 @@ ECDHKeyMaterial PerformECDHKeyExchange(tcp::socket &sock)
     EVP_PKEY_free(peer_key);
     EVP_PKEY_free(server_key);
 
-    return {final_shared_secret_hex, to_hex(client_pub)};
+    return {final_shared_secret_hex, to_hex(client_pub), to_hex(server_pub)};
 }
 
 string xorStrings(const string &str1, const string &str2)
@@ -1260,7 +1261,15 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
 
         // SHA3-512 parameters
         auto param_one = sha3_hashing_bytes(pqc_material.shared_secret_hex, pqc_material.ciphertext_hex);
-        auto param_two = sha3_hashing_bytes(ecdh_material.shared_secret_hex, ecdh_material.peer_pubkey_hex);
+        
+        // Symmetrize the ECDH public values by concatenating them in a defined order
+        std::string ecdh_pub_values;
+        if (ecdh_material.own_pubkey_hex < ecdh_material.peer_pubkey_hex) {
+            ecdh_pub_values = ecdh_material.own_pubkey_hex + ecdh_material.peer_pubkey_hex;
+        } else {
+            ecdh_pub_values = ecdh_material.peer_pubkey_hex + ecdh_material.own_pubkey_hex;
+        }
+        auto param_two = sha3_hashing_bytes(ecdh_material.shared_secret_hex, ecdh_pub_values);
 
         // Second-round HMAC keys
         auto second_round_key_one = hmac_hashing_bytes(std::string(param_one.begin(), param_one.end()),
@@ -1307,12 +1316,11 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         auto param_two = sha3_hashing_bytes(ecdh_material.shared_secret_hex, ecdh_material.peer_pubkey_hex);
         auto param_three = sha3_hashing_bytes(buffer_str, qkd_parameter);
 
-        auto second_round_key_one = hmac_hashing_bytes(std::string(param_two.begin(), param_two.end()),
+        auto second_round_key_one = hmac_hashing_bytes(std::string(param_one.begin(), param_one.end()),
                                                        std::string(key_one.begin(), key_one.end()));
-        auto second_round_key_two = hmac_hashing_bytes(std::string(param_one.begin(), param_one.end()),
+        auto second_round_key_two = hmac_hashing_bytes(std::string(param_two.begin(), param_two.end()),
                                                        std::string(key_two.begin(), key_two.end()));
-        auto second_round_key_three = hmac_hashing_bytes(std::string(param_one.begin(), param_one.end()) +
-                                                             std::string(param_two.begin(), param_two.end()),
+        auto second_round_key_three = hmac_hashing_bytes(std::string(param_three.begin(), param_three.end()),
                                                          std::string(key_three.begin(), key_three.end()));
 
         auto hybrid_key = xorVectors(xorVectors(second_round_key_one, second_round_key_two), second_round_key_three);
