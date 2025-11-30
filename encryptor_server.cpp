@@ -1293,11 +1293,14 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         return sec_key;
     }
 }
-void handle_client(tcp::socket tcp_socket, boost::asio::io_context& io_context, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
+void handle_client(tcp::socket tcp_socket, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
 {   
     std::vector<unsigned char> aes_keys;
     try {
         std::cout << "New client connected: " << tcp_socket.remote_endpoint().address() << "\n";
+
+        // Each thread needs its own io_context to prevent blocking other threads.
+        boost::asio::io_context io_context;
 
         const std::string ready_msg = "READY";
         boost::asio::write(tcp_socket, boost::asio::buffer(ready_msg));
@@ -1471,12 +1474,11 @@ int main(int argc, char* argv[])
 
             reap_threads(client_threads);
 
-            // Pass the io_context by reference so the thread can create its own sockets
             if(!qkd_ip.empty()){
-                client_threads.emplace_back(handle_client, std::move(socket), std::ref(io_context), chosen_pqc_alg, qkd_ip);
+                client_threads.emplace_back(handle_client, std::move(socket), chosen_pqc_alg, qkd_ip);
             }
             else{
-                client_threads.emplace_back(handle_client, std::move(socket), std::ref(io_context), chosen_pqc_alg, "");
+                client_threads.emplace_back(handle_client, std::move(socket), chosen_pqc_alg, "");
             }
         }
     } catch (const std::exception &e) {
