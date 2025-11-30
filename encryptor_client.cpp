@@ -1222,13 +1222,6 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     }
 }
 
-void join_threads(std::vector<std::thread>& threads) {
-    for (auto& t : threads) {
-        if (t.joinable()) t.join();
-    }
-    threads.clear();
-}
-
 int main(int argc, char* argv[]) {
     if (argc < 1 || argc > 3) {
         help();
@@ -1303,12 +1296,9 @@ int main(int argc, char* argv[]) {
 
             tcp_socket.non_blocking(true);
 
-            std::vector<std::thread> worker_threads;
             std::atomic<bool> shutdown_flag{false};
             std::atomic<int> read_order = 0, send_order = 1;
             int tundesc = tun_open();
-            int threads_max = std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1;
-            std::atomic<int> threads_available = threads_max;
 
             std::atomic<bool> client_rekey_flag{false};
             std::thread([&client_rekey_flag]() {
@@ -1328,12 +1318,14 @@ int main(int argc, char* argv[]) {
                         std::string qkd_key_buffer;
                         if (!qkd_ip.empty()) {
                             qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
-                            sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
                         }
-                        else {
-                            sec_key = rekey_cli(tcp_socket, "", srv_ip, "", chosen_pqc_alg);
-                        }
+                        sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
 
+                        if (sec_key.empty()) {
+                            std::cerr << "Server-initiated rekey failed, closing connection.\n";
+                            shutdown_flag.store(true);
+                            continue;
+                        }
                         key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
                         key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
                         std::cout << "Server-initiated rekey completed\n";
@@ -1350,12 +1342,14 @@ int main(int argc, char* argv[]) {
                     std::string qkd_key_buffer;
                     if (!qkd_ip.empty()) {
                         qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
-                        sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
-                    }
-                    else {
-                        sec_key = rekey_cli(tcp_socket, "", srv_ip, "", chosen_pqc_alg);
                     }
 
+                    sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
+                    if (sec_key.empty()) {
+                        std::cerr << "Client-initiated rekey failed, closing connection.\n";
+                        shutdown_flag.store(true);
+                        continue;
+                    }
                     key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
                     key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
                     std::cout << "Client-initiated rekey completed\n";
@@ -1368,35 +1362,29 @@ int main(int argc, char* argv[]) {
 
                 bool traffic_received = D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc, read_order, send_order);
 
-                if (traffic_sent || traffic_received) {
-                    if (threads_available > 0) {
-                        threads_available -= 1;
-                        worker_threads.emplace_back(thread_encrypt, &udp_socket, server_udp_ep, &key_encrypt, &key_decrypt,
-                                    tundesc, &threads_available, &read_order, &send_order);
-                    }
-                } else {
-                    // No traffic, check if we need to send a keep-alive
+                // If there was no traffic, check for keep-alive or wait for I/O
+                if (!traffic_sent && !traffic_received) {
                     auto now = std::chrono::steady_clock::now();
                     if (now - last_udp_send_time > keepalive_interval) {
                         udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_server), server_udp_ep);
                         last_udp_send_time = now;
+                    } else {
+                        // Wait for activity on TUN or UDP socket to avoid busy-looping
+                        fd_set fds;
+                        FD_ZERO(&fds);
+                        FD_SET(tundesc, &fds);
+                        int udp_native = udp_socket.native_handle();
+                        FD_SET(udp_native, &fds);
+                        struct timeval tv = {0, 100000}; // 100ms timeout
+                        int max_fd = std::max(tundesc, udp_native);
+                        select(max_fd + 1, &fds, NULL, NULL, &tv);
                     }
-                }
-
-                if (threads_available == threads_max) {
-                    fd_set fds;
-                    FD_ZERO(&fds);
-                    FD_SET(tundesc, &fds);
-                    int udp_native = udp_socket.native_handle();
-                    FD_SET(udp_native, &fds);
-                    struct timeval tv = {0, 1000}; // 1ms timeout
-                    int max_fd = std::max(tundesc, udp_native);
-                    select(max_fd + 1, &fds, NULL, NULL, &tv);
                 }
             }
 
-            join_threads(worker_threads);
-
+            // Cleanup on shutdown
+            std::cout << "Connection closing. Cleaning up resources.\n";
+            close(tundesc);
             tcp_socket.close();
             udp_socket.close();
         } catch (const std::exception &e) {
