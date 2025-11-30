@@ -1381,6 +1381,17 @@ void handle_client(tcp::socket tcp_socket, udp::socket& udp_socket, const std::s
     }
 }
 
+void reap_threads(std::vector<std::thread>& threads) {
+    threads.erase(std::remove_if(threads.begin(), threads.end(), 
+        [](std::thread& t) {
+            if (t.joinable()) {
+                t.join(); 
+                return true; 
+            }
+            return false;
+        }), threads.end());
+}
+
 
 int main(int argc, char* argv[])
 {
@@ -1418,14 +1429,20 @@ int main(int argc, char* argv[])
         udp::socket udp_socket(io_context, udp::endpoint(udp::v4(), PORT));
         std::cout << "Server UDP listening on port " << PORT << std::endl;
 
+        std::vector<std::thread> client_threads;
+
         while (true) {
             tcp::socket socket(io_context);
             acceptor.accept(socket);
+
+            // Periodically clean up finished threads
+            reap_threads(client_threads);
+
             if(!qkd_ip.empty()){
-                std::thread(handle_client, std::move(socket), std::ref(udp_socket), chosen_pqc_alg, qkd_ip).detach();
+                client_threads.emplace_back(handle_client, std::move(socket), std::ref(udp_socket), chosen_pqc_alg, qkd_ip);
             }
             else{
-                std::thread(handle_client, std::move(socket), std::ref(udp_socket), chosen_pqc_alg, "").detach();
+                client_threads.emplace_back(handle_client, std::move(socket), std::ref(udp_socket), chosen_pqc_alg, "");
             }
         }
     } catch (const std::exception &e) {

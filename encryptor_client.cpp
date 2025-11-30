@@ -1211,6 +1211,13 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     }
 }
 
+void join_threads(std::vector<std::thread>& threads) {
+    for (auto& t : threads) {
+        if (t.joinable()) t.join();
+    }
+    threads.clear();
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 1 || argc > 3) {
         help();
@@ -1274,6 +1281,9 @@ int main(int argc, char* argv[]) {
             udp_socket.non_blocking(true);
 
             tcp_socket.non_blocking(true);
+
+            std::vector<std::thread> worker_threads;
+            std::atomic<bool> shutdown_flag{false};
             std::atomic<int> read_order = 0, send_order = 1;
             int tundesc = tun_open();
             int threads_max = std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1;
@@ -1281,13 +1291,14 @@ int main(int argc, char* argv[]) {
 
             std::atomic<bool> client_rekey_flag{false};
             std::thread([&client_rekey_flag]() {
-                while (true) {
+                
+                while (true) { 
                     std::this_thread::sleep_for(std::chrono::hours(1));
                     client_rekey_flag.store(true);
                 }
             }).detach();
 
-            while (true) {
+            while (!shutdown_flag) {
                 boost::system::error_code ec;
                 char tcp_buf[1024] = {0};
                 size_t len = tcp_socket.read_some(boost::asio::buffer(tcp_buf), ec);
@@ -1308,7 +1319,7 @@ int main(int argc, char* argv[]) {
                     }
                 } else if (ec != boost::asio::error::would_block) {
                     std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
-                    break;
+                    shutdown_flag.store(true); // Signal shutdown
                 }
 
                 if (client_rekey_flag.load()) {
@@ -1333,8 +1344,8 @@ int main(int argc, char* argv[]) {
                     D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc, read_order, send_order)) {
                     if (threads_available > 0) {
                         threads_available -= 1;
-                        std::thread(thread_encrypt, &udp_socket, server_udp_ep, &key_encrypt, &key_decrypt,
-                                    tundesc, &threads_available, &read_order, &send_order).detach();
+                        worker_threads.emplace_back(thread_encrypt, &udp_socket, server_udp_ep, &key_encrypt, &key_decrypt,
+                                    tundesc, &threads_available, &read_order, &send_order);
                     }
                 }
 
@@ -1349,6 +1360,8 @@ int main(int argc, char* argv[]) {
                     select(max_fd + 1, &fds, NULL, NULL, &tv);
                 }
             }
+
+            join_threads(worker_threads);
 
             tcp_socket.close();
             udp_socket.close();
