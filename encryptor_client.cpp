@@ -1287,6 +1287,7 @@ int main(int argc, char* argv[]) {
             udp::endpoint server_udp_ep = *udp_resolver.resolve(udp::v4(), srv_ip, std::to_string(server_udp_port)).begin();
             udp_socket.open(udp::v4());
 
+            boost::system::error_code ec;
             udp_socket.send_to(boost::asio::buffer("Hello from client UDP"), server_udp_ep, 0, ec);
             std::cout << "Client UDP hello sent\n";
 

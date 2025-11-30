@@ -1334,7 +1334,6 @@ void handle_client(tcp::socket tcp_socket, boost::asio::io_context& io_context, 
         // Now perform the handshake on the dedicated socket (can be blocking)
 
         char udp_buf[1024];
-        udp::endpoint client_udp_ep;
         size_t len = udp_socket.receive_from(boost::asio::buffer(udp_buf), client_udp_ep);
         std::cout << "Server received UDP: " << std::string(udp_buf, len) << "\n";
 
