@@ -1200,7 +1200,7 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     else
     {   
         std::string qkd_key_buffer;
-        qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
+        qkd_key_buffer = get_qkdkey(qkd_ip, client_socket);
         // Include third QKD key
         auto key_one = hmac_hashing_bytes(salt, pqc_key);
         auto key_two = hmac_hashing_bytes(salt, ecdh_key);
