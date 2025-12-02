@@ -1435,12 +1435,11 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
             boost::system::error_code ec;
             if (FD_ISSET(tcp_native, &fds))
             {
-                char cmd_buf[1024] = {0};
-                size_t cmd_len = tcp_socket.read_some(boost::asio::buffer(cmd_buf), ec);
-
-                if (!ec && cmd_len > 0)
+                try
                 {   
-                    std::string cmd(cmd_buf, cmd_len);
+                    // Use the correct framed message receiver
+                    std::string cmd = receive_framed_message(tcp_socket);
+
                     if (cmd == "REKEY_CLIENT_INITIATED")
                     {
                         std::cout << "Client requested rekey\n";
@@ -1456,7 +1455,12 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                             key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
                         }
                     }
-                } else if (ec != boost::asio::error::would_block) {
+                }
+                catch (const boost::system::system_error& e)
+                {
+                    if (e.code() == boost::asio::error::would_block) {
+                        // No full message available yet, continue loop
+                    } else {
                     std::cerr << "TCP error: " << ec.message() << "\n";
                     break;
                 }
@@ -1499,21 +1503,6 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
     // Note: We do not close tundesc here, as it's managed by main().
     tcp_socket.close();
     udp_socket.close();
-}
-
-void reap_threads(std::vector<std::thread> &threads)
-{
-    threads.erase(std::remove_if(threads.begin(), threads.end(),
-                                 [](std::thread &t)
-                                 {
-                                     if (t.joinable())
-                                     {
-                                         t.join();
-                                         return true;
-                                     }
-                                     return false;
-                                 }),
-                  threads.end());
 }
 
 int main(int argc, char *argv[])
@@ -1579,7 +1568,7 @@ int main(int argc, char *argv[])
             tcp::socket socket(io_context);
             acceptor.accept(socket);
 
-            // Move the socket into the thread context to ensure proper ownership.
+
             client_threads.emplace_back(
                 [&io_context, s = std::move(socket), tundesc, chosen_pqc_alg, qkd_ip]() mutable
                 {

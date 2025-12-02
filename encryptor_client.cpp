@@ -1350,7 +1350,7 @@ int main(int argc, char* argv[]) {
                     std::cout << "Periodic rekey triggered by client timer.\n";
                     // Temporarily set socket to blocking for synchronous rekey protocol
                     tcp_socket.non_blocking(false, ec);
-                    boost::asio::write(tcp_socket, boost::asio::buffer("REKEY_CLIENT_INITIATED"));
+                    send_framed_message(tcp_socket, "REKEY_CLIENT_INITIATED");
                     std::cout << "Client-initiated rekey sent\n";
                     client_rekey_flag.store(false);
 
