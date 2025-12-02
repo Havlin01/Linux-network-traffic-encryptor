@@ -1351,6 +1351,7 @@ int main(int argc, char* argv[]) {
                     // Temporarily set socket to blocking for synchronous rekey protocol
                     tcp_socket.non_blocking(false, ec);
                     boost::asio::write(tcp_socket, boost::asio::buffer("REKEY_CLIENT_INITIATED"));
+                    std::cout << "Client-initiated rekey sent\n";
                     client_rekey_flag.store(false);
 
                     std::string qkd_key_buffer;
