@@ -1407,32 +1407,27 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
         while (true) {
-            fd_set fds;
-            FD_ZERO(&fds);
+            // Since this thread is dedicated to one client, we can use blocking reads
+            // on the TCP socket and rely on Boost.Asio's error handling to detect
+            // a closed connection. The original select() logic here was incomplete
+            // and causing confusion.
 
-            int tcp_native = tcp_socket.native_handle();
-            FD_SET(tcp_native, &fds);
+            // We need to check if the socket has data available without blocking forever.
+            // A non-blocking read_some is a good way to poll.
+            char peek_buf[1];
+            boost::system::error_code ec;
+            tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
 
-            int udp_native = udp_socket.native_handle();
-            FD_SET(udp_native, &fds);
-
-            FD_SET(tundesc, &fds);
-
-            int max_fd = std::max({tundesc, tcp_native, udp_native});
-
-            // Use a timeout to handle keep-alives
-            struct timeval tv = {1, 0}; // 1 second timeout
-            int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
-
-            if (ret < 0)
-            {
-                perror("select() error");
-                break;
+            if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset) {
+                 std::cerr << "TCP connection closed by peer.\n";
+                 break;
+            } else if (ec != boost::asio::error::would_block && ec) {
+                 std::cerr << "TCP error on poll: " << ec.message() << "\n";
+                 break;
             }
 
-            // 1. Process TCP commands (if select indicated activity)
-            std::cout << FD_ISSET(tcp_native, &fds) << "\n";
-            if (FD_ISSET(tcp_native, &fds))
+            // If there's data to be read (would_block is not set), process it.
+            if (tcp_socket.available() > 0)
             {
                 try
                 {
@@ -1440,50 +1435,30 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                     if (cmd == "REKEY_CLIENT_INITIATED")
                     {
                         std::cout << "Client requested rekey\n";
-                        // Temporarily set socket to blocking for synchronous rekey protocol
-                        tcp_socket.non_blocking(false, ec);
                         aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-                        // Restore non-blocking mode for the main loop
-                        tcp_socket.non_blocking(true, ec);
 
                         if (!aes_keys.empty())
                         {
                             key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
                             key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
                         }
+                    } else if (!cmd.empty()) {
+                        std::cerr << "Received unknown TCP command: " << cmd << "\n";
                     }
                 }
                 catch (const boost::system::system_error &e)
                 {
-                    if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset) {
-                        std::cerr << "TCP connection closed by peer.\n";
-                    } else if (e.code() != boost::asio::error::would_block) {
-                        std::cerr << "TCP error: " << e.what() << "\n";
-                    }
+                    std::cerr << "TCP error during receive: " << e.what() << "\n";
                     break;
                 }
             }
 
-            // 2. Process TUN->UDP traffic (if select indicated activity)
-            if (FD_ISSET(tundesc, &fds)) {
-                if (E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order)) {
-                    last_udp_send_time = std::chrono::steady_clock::now();
-                }
-            }
+            // Process TUN and UDP traffic (these are non-blocking calls)
+            E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order);
+            D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
 
-            // 3. Process UDP->TUN traffic (if select indicated activity)
-            if (FD_ISSET(udp_native, &fds)) {
-                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
-            }
-
-            // 4. Handle keep-alive for idle connections (if select timed out)
-            if (ret == 0) {
-                auto now = std::chrono::steady_clock::now();
-                if (now - last_udp_send_time > keepalive_interval) {
-                    udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_client), client_udp_ep);
-                    last_udp_send_time = now;
-                }
-            }
+            // A short sleep to prevent this busy-loop from consuming 100% CPU
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         close(tundesc);
         tcp_socket.close();
