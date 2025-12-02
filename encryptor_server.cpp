@@ -1407,6 +1407,9 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         auto last_udp_send_time = std::chrono::steady_clock::now();
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
+        int threads_max = std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1;
+        std::atomic<int> threads_available = threads_max;
+
           while (true) {
             // Check for TCP commands
             char cmd_buf[1024] = {0};
