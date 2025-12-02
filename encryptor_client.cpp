@@ -1304,7 +1304,7 @@ int main(int argc, char* argv[]) {
             std::thread([&client_rekey_flag]() {
                 
                 while (true) { 
-                    std::this_thread::sleep_for(std::chrono::hours(1));
+                    std::this_thread::sleep_for(std::chrono::seconds(3));
                     client_rekey_flag.store(true);
                 }
             }).detach();
