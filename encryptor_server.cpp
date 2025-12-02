@@ -1382,9 +1382,16 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
                 std::string cmd(cmd_buf, cmd_len);
                 if (cmd == "REKEY_CLIENT_INITIATED") {
                     std::cout << "Client requested rekey\n";
+                    // Temporarily set socket to blocking for synchronous rekey protocol
+                    tcp_socket.non_blocking(false, ec);
                     aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-                    key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
-                    key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
+                    // Restore non-blocking mode for the main loop
+                    tcp_socket.non_blocking(true, ec);
+
+                    if (!aes_keys.empty()) {
+                        key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
+                        key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
+                    }
                 } else if (cmd == "exit") {
                     std::cout << "Client requested exit\n";
                     break;

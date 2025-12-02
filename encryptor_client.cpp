@@ -1315,11 +1315,16 @@ int main(int argc, char* argv[]) {
                 size_t len = tcp_socket.read_some(boost::asio::buffer(tcp_buf), ec);
                 if (!ec && len > 0) {
                     if (std::string(tcp_buf, len) == "REKEY_SERVER_INITIATED") {
+                        // Temporarily set socket to blocking for synchronous rekey protocol
+                        tcp_socket.non_blocking(false, ec);
                         std::string qkd_key_buffer;
                         if (!qkd_ip.empty()) {
                             qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
                         }
                         sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
+
+                        // Restore non-blocking mode for the main loop
+                        tcp_socket.non_blocking(true, ec);
 
                         if (sec_key.empty()) {
                             std::cerr << "Server-initiated rekey failed, closing connection.\n";
@@ -1336,6 +1341,8 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (client_rekey_flag.load()) {
+                    // Temporarily set socket to blocking for synchronous rekey protocol
+                    tcp_socket.non_blocking(false, ec);
                     boost::asio::write(tcp_socket, boost::asio::buffer("REKEY_CLIENT_INITIATED"));
                     client_rekey_flag.store(false);
 
@@ -1343,8 +1350,11 @@ int main(int argc, char* argv[]) {
                     if (!qkd_ip.empty()) {
                         qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
                     }
-
                     sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
+
+                    // Restore non-blocking mode for the main loop
+                    tcp_socket.non_blocking(true, ec);
+
                     if (sec_key.empty()) {
                         std::cerr << "Client-initiated rekey failed, closing connection.\n";
                         shutdown_flag.store(true);
