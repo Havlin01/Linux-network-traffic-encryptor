@@ -1396,8 +1396,9 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         std::cout << "Server replied to UDP\n";
 
         // Now, set sockets to non-blocking for the main select() loop.
-        tcp_socket.non_blocking(true);
-        udp_socket.non_blocking(true);
+        boost::system::error_code non_blocking_ec;
+        tcp_socket.non_blocking(true, non_blocking_ec);
+        udp_socket.non_blocking(true, non_blocking_ec);
 
         std::atomic<int> read_order(1), send_order(1);
         std::vector<unsigned char> key_decrypt(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
@@ -1409,81 +1410,77 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
 
         while (true)
         {
+            fd_set fds;
+            FD_ZERO(&fds);
 
-            char peek_buf[1];
-            boost::system::error_code ec;
-            tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
+            int tcp_native = tcp_socket.native_handle();
+            FD_SET(tcp_native, &fds);
 
-            if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset)
-            {
-                std::cerr << "TCP connection closed by peer.\n";
+            int udp_native = udp_socket.native_handle();
+            FD_SET(udp_native, &fds);
+
+            FD_SET(tundesc, &fds);
+
+            int max_fd = std::max({tundesc, tcp_native, udp_native});
+
+            struct timeval tv = {1, 0}; // 1 second timeout for keepalives
+            int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
+
+            if (ret < 0) {
+                perror("select() error");
                 break;
             }
-            else if (ec != boost::asio::error::would_block && ec)
-            {
-                std::cerr << "TCP error on poll: " << ec.message() << "\n";
-                break;
-            }
 
+            // 1. Process TCP commands (if select indicated activity)
+            if (FD_ISSET(tcp_native, &fds)) {
+                try {
+                    std::string cmd = receive_framed_message(tcp_socket);
+                    if (cmd == "REKEY_CLIENT_INITIATED") {
+                        std::cout << "Client initiated rekey" << std::endl;
+                        
+                        tcp_socket.non_blocking(false, non_blocking_ec);
+                        aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+                        tcp_socket.non_blocking(true, non_blocking_ec);
 
-            char bufferTCP[4096];
-
-            size_t status = tcp_socket.read_some(boost::asio::buffer(bufferTCP), ec);
-
-            if (!ec && status > 0)
-            {
-                std::string msg(bufferTCP, bufferTCP + status);
-
- 
-                while (!msg.empty() && (msg.back() == '\n' || msg.back() == '\r'))
-                    msg.pop_back();
-
-                if (msg == "REKEY_CLIENT_INITIATED")
-                {
-                    std::cout << "Client initiated rekey" << std::endl;
-
-                    // ---- LEGACY PRESERVED: make socket blocking ----
-                    int flags = fcntl(tcp_socket.native_handle(), F_GETFL, 0);
-                    fcntl(tcp_socket.native_handle(), F_SETFL, flags & ~O_NONBLOCK);
-
-                    // ---- LEGACY PRESERVED: synchronous rekey call ----
-                    std::vector<unsigned char> new_key_material =
-                        rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-
-                    // ---- apply new keys (NEW SERVER API) ----
-                    // Expecting two AES keys back-to-back (encrypt/decrypt)
-                    if (new_key_material.size() >= AES_GCM_KEY_LEN * 2)
-                    {
-                        aes_keys = new_key_material;
-
-                        key_decrypt.assign(
-                            aes_keys.begin(),
-                            aes_keys.begin() + AES_GCM_KEY_LEN);
-
-                        key_encrypt.assign(
-                            aes_keys.begin() + AES_GCM_KEY_LEN,
-                            aes_keys.begin() + (AES_GCM_KEY_LEN * 2));
-
-                        std::cout << "Rekey completed & keys updated" << std::endl;
+                        if (aes_keys.size() >= AES_GCM_KEY_LEN * 2) {
+                            key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
+                            key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
+                            std::cout << "Rekey completed & keys updated" << std::endl;
+                        } else {
+                            std::cerr << "Rekey returned insufficient key material. Closing connection.\n";
+                            break;
+                        }
                     }
-                    else
-                    {
-                        std::cerr << "Rekey returned insufficient key length" << std::endl;
+                } catch (const boost::system::system_error &e) {
+                    if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset) {
+                        std::cerr << "TCP connection closed by peer.\n";
+                    } else if (e.code() != boost::asio::error::would_block) {
+                        std::cerr << "TCP error: " << e.what() << "\n";
                     }
-
-
-                    fcntl(tcp_socket.native_handle(), F_SETFL, flags | O_NONBLOCK);
-
-                    continue;
+                    break; // Exit loop on TCP error/closure
                 }
             }
 
-            // Process TUN and UDP traffic (these are non-blocking calls)
-            E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order);
-            D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
+            // 2. Process TUN->UDP traffic
+            if (FD_ISSET(tundesc, &fds)) {
+                if (E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order)) {
+                    last_udp_send_time = std::chrono::steady_clock::now();
+                }
+            }
 
-            // A short sleep to prevent this busy-loop from consuming 100% CPU
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            // 3. Process UDP->TUN traffic
+            if (FD_ISSET(udp_native, &fds)) {
+                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
+            }
+
+            // 4. Handle keep-alive if select timed out
+            if (ret == 0) {
+                auto now = std::chrono::steady_clock::now();
+                if (now - last_udp_send_time > keepalive_interval) {
+                    udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_client), client_udp_ep);
+                    last_udp_send_time = now;
+                }
+            }
         }
         tcp_socket.close();
         udp_socket.close();
@@ -1495,10 +1492,9 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
     {
         std::cerr << "Server exception: " << e.what() << "\n";
     }
-    // Ensure sockets are closed if an exception occurs
+    // Ensure sockets are closed if an exception occurs, and log thread completion.
     if (tcp_socket.is_open()) tcp_socket.close();
     if (udp_socket.is_open()) udp_socket.close();
-    // Note: tundesc is shared and should not be closed by this thread.
     std::cout << "Client thread finished. Cleaning up." << std::endl;
    
 }
@@ -1564,12 +1560,6 @@ int main(int argc, char *argv[])
 
         while (true)
         {
-
-            client_threads.remove_if([](std::thread& t) {
-
-                return !t.joinable(); 
-            });
-
             tcp::socket socket(io_context);
             acceptor.accept(socket);
 
@@ -1578,6 +1568,10 @@ int main(int argc, char *argv[])
                 {
                     handle_client(io_context, std::move(s), tundesc, chosen_pqc_alg, qkd_ip);
                 });
+            // Detach the thread. This is a simple model for a server that handles many
+            // short-lived connections. The thread is responsible for its own resource cleanup.
+            // The handle_client function is now robust enough to terminate correctly.
+            client_threads.back().detach();
         }
 
         // On graceful shutdown, join all remaining threads.
