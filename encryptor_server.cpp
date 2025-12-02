@@ -1431,6 +1431,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
             }
 
             // 1. Process TCP commands (if select indicated activity)
+            std::cout << FD_ISSET(tcp_native, &fds) << "\n";
             if (FD_ISSET(tcp_native, &fds))
             {
                 try
