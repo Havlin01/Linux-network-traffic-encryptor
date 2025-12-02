@@ -31,7 +31,6 @@
 #include <openssl/rand.h>
 #include <openssl/hmac.h>
 #include <openssl/objects.h>
-#include <list>
 #include <string_view> // Added for string_view
 
 using boost::asio::ip::tcp;
@@ -1495,11 +1494,11 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
     {
         std::cerr << "Server exception: " << e.what() << "\n";
     }
-    // Ensure sockets are closed if an exception occurs before the main loop
+    // Ensure sockets are closed if an exception occurs
     if (tcp_socket.is_open()) tcp_socket.close();
     if (udp_socket.is_open()) udp_socket.close();
     // Note: tundesc is shared and should not be closed by this thread.
-    std::cout << "Client thread finished for " << tcp_socket.remote_endpoint().address() << ". Cleaning up." << std::endl;
+    std::cout << "Client thread finished. Cleaning up." << std::endl;
    
 }
 
@@ -1561,46 +1560,31 @@ int main(int argc, char *argv[])
         std::cout << "Server TCP listening on port " << KEYPORT << std::endl;
         
         std::list<std::thread> client_threads; // Use std::list for efficient removal
-        std::mutex threads_mutex;
-        std::atomic<bool> shutdown_flag{false};
-
-        // Reaper thread to clean up finished client threads
-        std::thread reaper_thread([&]() {
-            while (!shutdown_flag) {
-                std::this_thread::sleep_for(std::chrono::seconds(5));
-                std::lock_guard<std::mutex> lock(threads_mutex);
-                client_threads.remove_if([](std::thread& t) {
-                    if (t.joinable()) {
-                        // Check if thread is finished without blocking
-                        if (t.get_id() != std::this_thread::get_id()) { // A simple check
-                           // A more robust check would involve a shared flag per thread
-                           // but for now, we rely on the fact that joinable threads that
-                           // have exited their function are ready to be joined.
-                           // This is a simplification; a production server would use a more
-                           // sophisticated mechanism. For now, we assume we can try to join.
-                        }
-                    }
-                    return false; // For this simplified model, we won't remove, just prevent growth.
-                });
-            }
-        });
 
         while (true)
         {
+
+            client_threads.remove_if([](std::thread& t) {
+
+                return !t.joinable(); 
+            });
+
             tcp::socket socket(io_context);
             acceptor.accept(socket);
 
-            std::lock_guard<std::mutex> lock(threads_mutex);
             client_threads.emplace_back(
                 [&io_context, s = std::move(socket), tundesc, chosen_pqc_alg, qkd_ip]() mutable
                 {
                     handle_client(io_context, std::move(s), tundesc, chosen_pqc_alg, qkd_ip);
                 });
-            client_threads.back().detach(); // Detach to allow independent execution
         }
 
-        shutdown_flag = true;
-        if(reaper_thread.joinable()) reaper_thread.join();
+        // On graceful shutdown, join all remaining threads.
+        for (auto& t : client_threads) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
     }
     catch (const std::exception &e)
     {
