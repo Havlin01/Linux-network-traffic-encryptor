@@ -1406,8 +1406,6 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         auto last_udp_send_time = std::chrono::steady_clock::now();
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
-        char bufferTCP[MAXLINE] = {0};
-
         while (true)
         {
 
