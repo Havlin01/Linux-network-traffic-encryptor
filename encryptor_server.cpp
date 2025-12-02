@@ -1406,12 +1406,15 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         auto last_udp_send_time = std::chrono::steady_clock::now();
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
+        char bufferTCP[MAXLINE] = {0};
+        
+
         while (true)
         {
 
             char peek_buf[1];
             boost::system::error_code ec;
-            tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
+            auto status = tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
 
             if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset)
             {
@@ -1425,14 +1428,13 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
             }
 
             // If there's data to be read (would_block is not set), process it.
-            if (tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec) > 0)
+            if (status > 0)
             {
-                if (status > 0)
-                {
+                
                     boost::system::error_code ec;
 
                     // *** FORCE BLOCKING MODE ***
-                    fcntl(new_socket, F_SETFL, fcntl(new_socket, F_GETFL, 0) & ~O_NONBLOCK);
+                    fcntl(tcp_socket, F_SETFL, fcntl(tcp_socket, F_GETFL, 0) & ~O_NONBLOCK);
 
                     // Decode REKEY command (unframed)
                     bufferTCP[status] = '\0';
@@ -1441,20 +1443,14 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                     {
                         std::cout << "[SERVER] Client initiated rekey" << std::endl;
 
-                        // Perform rekey (same function as initial)
-                        if (argv[1] != NULL)
-                        {
-                            get_qkdkey(qkd_ip, bufferTCP);
-                        }
-
-                        key = rekey_srv(new_socket, qkd_ip);
+                        aes_keys = rekey_srv(tcp_socket, qkd_ip);
 
                         std::cout << "[SERVER] Rekey complete" << std::endl;
                     }
 
                     // *** RESTORE NON-BLOCKING MODE ***
-                    fcntl(new_socket, F_SETFL, O_NONBLOCK);
-                }
+                    fcntl(tcp_socket, F_SETFL, O_NONBLOCK);
+                
             }
 
             // Process TUN and UDP traffic (these are non-blocking calls)
