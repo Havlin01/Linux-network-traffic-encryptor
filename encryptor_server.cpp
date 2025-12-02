@@ -1371,60 +1371,76 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
         while (true) {
-            char cmd_buf[1024] = {0};
-            size_t cmd_len = tcp_socket.read_some(boost::asio::buffer(cmd_buf), ec);
-            if (!ec && cmd_len > 0) {
-                std::string cmd(cmd_buf, cmd_len);
-                if (cmd == "REKEY_CLIENT_INITIATED") {
-                    std::cout << "Client requested rekey\n";
-                    // Temporarily set socket to blocking for synchronous rekey protocol
-                    tcp_socket.non_blocking(false, ec);
-                    aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-                    // Restore non-blocking mode for the main loop
-                    tcp_socket.non_blocking(true, ec);
+            // Use select() to wait for activity on any socket or a timeout.
+            fd_set fds;
+            FD_ZERO(&fds);
 
-                    if (!aes_keys.empty()) {
-                        key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
-                        key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
+            int tcp_native = tcp_socket.native_handle();
+            FD_SET(tcp_native, &fds);
+
+            int udp_native = udp_socket.native_handle();
+            FD_SET(udp_native, &fds);
+
+            FD_SET(tundesc, &fds);
+
+            int max_fd = std::max({tundesc, tcp_native, udp_native});
+
+            struct timeval tv = {0, 100000}; // 100ms timeout
+            int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
+
+            if (ret < 0) {
+                perror("select() error");
+                break;
+            }
+
+            boost::system::error_code ec;
+            // 1. Check for TCP commands from client (only if select indicated activity)
+            if (FD_ISSET(tcp_native, &fds)) {
+                char cmd_buf[1024] = {0};
+                size_t cmd_len = tcp_socket.read_some(boost::asio::buffer(cmd_buf), ec);
+                if (!ec && cmd_len > 0) {
+                    std::string cmd(cmd_buf, cmd_len);
+                    if (cmd == "REKEY_CLIENT_INITIATED") {
+                        std::cout << "Client requested rekey\n";
+                        // Temporarily set socket to blocking for synchronous rekey protocol
+                        tcp_socket.non_blocking(false, ec);
+                        aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+                        // Restore non-blocking mode for the main loop
+                        tcp_socket.non_blocking(true, ec);
+
+                        if (!aes_keys.empty()) {
+                            key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
+                            key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
+                        }
+                    } else if (cmd == "exit") {
+                        std::cout << "Client requested exit\n";
+                        break;
                     }
-                } else if (cmd == "exit") {
-                    std::cout << "Client requested exit\n";
+                } else if (ec != boost::asio::error::would_block) {
+                    std::cerr << "TCP error: " << ec.message() << "\n";
                     break;
                 }
-            } else if (ec == boost::asio::error::would_block) {
-                // No data, continue looping
-            } else if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset) {
-                std::cout << "Client disconnected (EOF/reset)\n";
-                break;
-            } else if (ec) {
-                std::cerr << "TCP error: " << ec.message() << "\n";
-                break;
             }
 
-            bool traffic_sent = E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order);
-            if (traffic_sent) {
-                last_udp_send_time = std::chrono::steady_clock::now();
+            // 2. Process TUN->UDP traffic (if select indicated activity)
+            if (FD_ISSET(tundesc, &fds)) {
+                if (E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order)) {
+                    last_udp_send_time = std::chrono::steady_clock::now();
+                }
             }
 
-            bool traffic_received = D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
+            // 3. Process UDP->TUN traffic (if select indicated activity)
+            if (FD_ISSET(udp_native, &fds)) {
+                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
+            }
 
-            // If there was no traffic, check for keep-alive or wait for I/O
-            if (!traffic_sent && !traffic_received) {
+            // 4. Handle keep-alive for idle connections
+            if (ret == 0) { // This means select() timed out, i.e., no activity
                 // No traffic, check if we need to send a keep-alive
                 auto now = std::chrono::steady_clock::now();
                 if (now - last_udp_send_time > keepalive_interval) {
                     udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_client), client_udp_ep);
                     last_udp_send_time = now;
-                } else {
-                    // Wait for activity on TUN or UDP socket to avoid busy-looping
-                    fd_set fds;
-                    FD_ZERO(&fds);
-                    FD_SET(tundesc, &fds);
-                    int udp_native = udp_socket.native_handle();
-                    FD_SET(udp_native, &fds);
-                    struct timeval tv = {0, 100000}; // 100ms timeout
-                    int max_fd = std::max(tundesc, udp_native);
-                    select(max_fd + 1, &fds, NULL, NULL, &tv);
                 }
             }
         }
