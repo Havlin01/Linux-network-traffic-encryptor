@@ -281,7 +281,7 @@ int tun_open()
     if ((fd = open("/dev/net/tun", O_RDWR | O_NONBLOCK)) == -1)
     {
         perror("open /dev/net/tun");
-        exit(1);
+        throw std::runtime_error("Failed to open /dev/net/tun");
     }
     memset(&ifr, 0, sizeof(ifr));
     ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
@@ -291,7 +291,7 @@ int tun_open()
     {
         perror("ioctl TUNSETIFF");
         close(fd);
-        exit(1);
+        throw std::runtime_error("ioctl(TUNSETIFF) failed for tun0");
     }
 
     return fd;
@@ -1293,11 +1293,10 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         return sec_key;
     }
 }
-void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
+void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, int tundesc, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
 {   
     std::vector<unsigned char> aes_keys;
     udp::socket udp_socket(io_context);
-    int tundesc = -1;
 
     try {
         std::cout << "New client connected: " << tcp_socket.remote_endpoint().address() << "\n";
@@ -1364,16 +1363,12 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
         udp_socket.non_blocking(true);
 
         std::atomic<int> read_order(1), send_order(1);
-        tundesc = tun_open();
         std::vector<unsigned char> key_decrypt(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
         std::vector<unsigned char> key_encrypt(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
 
         const std::chrono::seconds keepalive_interval(15);
         auto last_udp_send_time = std::chrono::steady_clock::now();
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
-
-        int threads_max = std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1;
-        std::atomic<int> threads_available = threads_max;
 
         while (true) {
             char cmd_buf[1024] = {0};
@@ -1413,30 +1408,24 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
 
             bool traffic_received = D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
 
-            if (traffic_sent || traffic_received) {
-                if (threads_available > 0) {
-                    threads_available -= 1;
-                    std::thread(thread_encrypt, &udp_socket, client_udp_ep, &key_encrypt, &key_decrypt,
-                                tundesc, &threads_available, &read_order, &send_order).detach();
-                }
-            } else {
+            // If there was no traffic, check for keep-alive or wait for I/O
+            if (!traffic_sent && !traffic_received) {
                 // No traffic, check if we need to send a keep-alive
                 auto now = std::chrono::steady_clock::now();
                 if (now - last_udp_send_time > keepalive_interval) {
                     udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_client), client_udp_ep);
                     last_udp_send_time = now;
+                } else {
+                    // Wait for activity on TUN or UDP socket to avoid busy-looping
+                    fd_set fds;
+                    FD_ZERO(&fds);
+                    FD_SET(tundesc, &fds);
+                    int udp_native = udp_socket.native_handle();
+                    FD_SET(udp_native, &fds);
+                    struct timeval tv = {0, 100000}; // 100ms timeout
+                    int max_fd = std::max(tundesc, udp_native);
+                    select(max_fd + 1, &fds, NULL, NULL, &tv);
                 }
-            }
-
-            if (threads_available == threads_max) {
-                fd_set fds;
-                FD_ZERO(&fds);
-                FD_SET(tundesc, &fds);
-                int udp_native = udp_socket.native_handle();
-                FD_SET(udp_native, &fds);
-                struct timeval tv = {0, 1000}; // 1ms timeout
-                int max_fd = std::max(tundesc, udp_native);
-                select(max_fd + 1, &fds, NULL, NULL, &tv);
             }
         }
 
@@ -1446,11 +1435,9 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
     }
 
     // Cleanup resources
-    if (tundesc != -1) {
-        close(tundesc);
-        tcp_socket.close();
-        udp_socket.close();
-    }
+    // Note: We do not close tundesc here, as it's managed by main().
+    tcp_socket.close();
+    udp_socket.close();
 }
 
 void reap_threads(std::vector<std::thread>& threads) {
@@ -1493,6 +1480,17 @@ int main(int argc, char* argv[])
     }
     std::cout << "Selected PQC Algorithm: " << chosen_pqc_alg << std::endl;
 
+    // --- TUN device setup ---
+    // The TUN device is created once and shared by all client threads.
+    int tundesc = -1;
+    try {
+        tundesc = tun_open();
+        std::cout << "TUN device tun0 opened successfully.\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Fatal error creating TUN device: " << e.what() << std::endl;
+        return 1;
+    }
+
     try {
         boost::asio::io_context io_context;
         tcp::acceptor acceptor(io_context, tcp::endpoint(tcp::v4(), KEYPORT));
@@ -1508,14 +1506,18 @@ int main(int argc, char* argv[])
 
             // Move the socket into the thread context to ensure proper ownership.
             client_threads.emplace_back(
-                [&io_context, s = std::move(socket), chosen_pqc_alg, qkd_ip]() mutable {
-                    handle_client(io_context, std::move(s), chosen_pqc_alg, qkd_ip);
+                [&io_context, s = std::move(socket), tundesc, chosen_pqc_alg, qkd_ip]() mutable {
+                    handle_client(io_context, std::move(s), tundesc, chosen_pqc_alg, qkd_ip);
                 }
             );
         }
     } catch (const std::exception &e) {
         std::cerr << "Server exception: " << e.what() << std::endl;
         return 1;
+    }
+
+    if (tundesc != -1) {
+        close(tundesc);
     }
 
     if (defprov) OSSL_PROVIDER_unload(defprov);

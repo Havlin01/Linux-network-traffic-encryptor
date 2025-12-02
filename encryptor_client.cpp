@@ -260,7 +260,7 @@ int tun_open()
     if ((fd = open("/dev/net/tun", O_RDWR | O_NONBLOCK)) == -1)
     {
         perror("open /dev/net/tun");
-        exit(1);
+        throw std::runtime_error("Failed to open /dev/net/tun");
     }
     memset(&ifr, 0, sizeof(ifr));
     ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
@@ -270,7 +270,7 @@ int tun_open()
     {
         perror("ioctl TUNSETIFF");
         close(fd);
-        exit(1);
+        throw std::runtime_error("ioctl(TUNSETIFF) failed for tun0");
     }
 
     return fd;
@@ -1243,6 +1243,17 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "Selected PQC Algorithm: " << chosen_pqc_alg << std::endl;
 
+    // --- TUN device setup ---
+    // The TUN device is created once and persists for the application's lifetime.
+    int tundesc = -1;
+    try {
+        tundesc = tun_open();
+        std::cout << "TUN device tun0 opened successfully.\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Fatal error creating TUN device: " << e.what() << std::endl;
+        return 1;
+    }
+
     // --- Thread and shutdown flag for periodic rekeying ---
     // These are declared outside the main loop to persist across reconnections.
     std::atomic<bool> app_shutdown_flag{false};
@@ -1269,14 +1280,9 @@ int main(int argc, char* argv[]) {
 
             const std::string init_rekey_msg = "INIT_REKEY";
             boost::asio::write(tcp_socket, boost::asio::buffer(init_rekey_msg));
-            std::string qkd_key_buffer;
+
             std::vector<uint8_t> sec_key;
-            if (!qkd_ip.empty()) {
-                sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
-            }
-            else {
-                sec_key = rekey_cli(tcp_socket, "", srv_ip, "", chosen_pqc_alg);
-            }
+            sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, "", chosen_pqc_alg);
             
             std::vector<unsigned char> key_encrypt(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
             std::vector<unsigned char> key_decrypt(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
@@ -1310,7 +1316,6 @@ int main(int argc, char* argv[]) {
 
             std::atomic<bool> shutdown_flag{false};
             std::atomic<int> read_order = 0, send_order = 1;
-            int tundesc = tun_open();
 
             while (!shutdown_flag) {
                 boost::system::error_code ec;
@@ -1397,13 +1402,17 @@ int main(int argc, char* argv[]) {
 
             // Cleanup on shutdown
             std::cout << "Connection closing. Cleaning up resources.\n";
-            close(tundesc);
             tcp_socket.close();
             udp_socket.close();
         } catch (const std::exception &e) {
             std::cerr << "Client exception: " << e.what() << "\nRetrying in 5s...\n";
             std::this_thread::sleep_for(std::chrono::seconds(5));
         }
+    }
+
+    // Final cleanup when the application exits.
+    if (tundesc != -1) {
+        close(tundesc);
     }
 
     // Signal the rekey thread to shut down and wait for it to complete.
