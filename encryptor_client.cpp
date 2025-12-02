@@ -1243,6 +1243,18 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "Selected PQC Algorithm: " << chosen_pqc_alg << std::endl;
 
+    // --- Thread and shutdown flag for periodic rekeying ---
+    // These are declared outside the main loop to persist across reconnections.
+    std::atomic<bool> app_shutdown_flag{false};
+    std::atomic<bool> client_rekey_flag{false};
+
+    std::thread rekey_thread([&client_rekey_flag, &app_shutdown_flag]() {
+        while (!app_shutdown_flag) { 
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+            client_rekey_flag.store(true);
+        }
+    });
+
     while (true) {
         try {
             boost::asio::io_context io_context;
@@ -1299,15 +1311,6 @@ int main(int argc, char* argv[]) {
             std::atomic<bool> shutdown_flag{false};
             std::atomic<int> read_order = 0, send_order = 1;
             int tundesc = tun_open();
-
-            std::atomic<bool> client_rekey_flag{false};
-            std::thread([&client_rekey_flag]() {
-                
-                while (true) { 
-                    std::this_thread::sleep_for(std::chrono::seconds(3));
-                    client_rekey_flag.store(true);
-                }
-            }).detach();
 
             while (!shutdown_flag) {
                 boost::system::error_code ec;
@@ -1403,5 +1406,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Signal the rekey thread to shut down and wait for it to complete.
+    app_shutdown_flag.store(true);
+    if (rekey_thread.joinable()) {
+        rekey_thread.join();
+    }
     return 0;
 }
