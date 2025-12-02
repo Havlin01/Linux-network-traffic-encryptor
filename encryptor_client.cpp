@@ -1394,39 +1394,44 @@ int main(int argc, char *argv[])
                 // 1. Check for client-initiated rekey flag (checked every loop iteration)
                 if (client_rekey_flag.load())
                 {
+                    std::cout << "Periodic rekey triggered by client timer.\n";
+
                     boost::system::error_code ec;
 
-                    // *** FORCE BLOCKING MODE ***
+                    // *** FORCE BLOCKING MODE FOR REKEY ***
                     tcp_socket.non_blocking(false, ec);
 
-                    // Send periodic rekey request
-                    const std::string msg = "CLIENT_INITIATED_REKEY";
-                    send_framed_message(tcp_socket, msg);
+                    // --- send rekey request EXACTLY like initial exchange ---
+                    boost::asio::write(tcp_socket, boost::asio::buffer("REKEY_CLIENT_INITIATED"));
+                    std::cout << "Client-initiated rekey sent\n";
 
-                    std::cout << "[CLIENT] Sent periodic rekey request" << std::endl;
+                    client_rekey_flag.store(false);
 
-                    // *** RESTORE NON-BLOCKING MODE ***
-                    tcp_socket.non_blocking(true, ec);
-
+                    // --- QKD data (unchanged) ---
                     std::string qkd_key_buffer;
                     if (!qkd_ip.empty())
                     {
                         qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
                     }
+
+                    // --- perform rekey using your function ---
                     sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
 
-                    // Restore non-blocking mode for the main loop
+                    // *** RESTORE NON-BLOCKING MODE ***
                     tcp_socket.non_blocking(true, ec);
 
+                    // --- update keys EXACTLY like initial code ---
                     if (sec_key.empty())
                     {
                         std::cerr << "Client-initiated rekey failed, closing connection.\n";
                         shutdown_flag.store(true);
-                        continue;
                     }
-                    key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
-                    key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
-                    std::cout << "Client-initiated rekey completed\n";
+                    else
+                    {
+                        key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
+                        key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
+                        std::cout << "Client-initiated rekey completed\n";
+                    }
                 }
 
                 // 2. Check for TCP commands from server (only if select indicated activity)

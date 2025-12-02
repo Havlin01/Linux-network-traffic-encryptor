@@ -1407,7 +1407,6 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
         char bufferTCP[MAXLINE] = {0};
-        
 
         while (true)
         {
@@ -1427,30 +1426,58 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                 break;
             }
 
-            // If there's data to be read (would_block is not set), process it.
-            if (status > 0)
+
+            char bufferTCP[4096];
+
+            boost::system::error_code ec;
+            size_t status = tcp_socket.read_some(boost::asio::buffer(bufferTCP), ec);
+
+            if (!ec && status > 0)
             {
-                
-                    boost::system::error_code ec;
+                std::string msg(bufferTCP, bufferTCP + status);
 
-                    // *** FORCE BLOCKING MODE ***
-                    fcntl(tcp_socket, F_SETFL, fcntl(tcp_socket, F_GETFL, 0) & ~O_NONBLOCK);
+ 
+                while (!msg.empty() && (msg.back() == '\n' || msg.back() == '\r'))
+                    msg.pop_back();
 
-                    // Decode REKEY command (unframed)
-                    bufferTCP[status] = '\0';
+                if (msg == "REKEY_CLIENT_INITIATED")
+                {
+                    std::cout << "Client initiated rekey" << std::endl;
 
-                    if (std::string(bufferTCP) == "CLIENT_INITIATED_REKEY")
+                    // ---- LEGACY PRESERVED: make socket blocking ----
+                    int flags = fcntl(tcp_socket.native_handle(), F_GETFL, 0);
+                    fcntl(tcp_socket.native_handle(), F_SETFL, flags & ~O_NONBLOCK);
+
+                    // ---- LEGACY PRESERVED: synchronous rekey call ----
+                    std::vector<unsigned char> new_key_material =
+                        rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+
+                    // ---- apply new keys (NEW SERVER API) ----
+                    // Expecting two AES keys back-to-back (encrypt/decrypt)
+                    if (new_key_material.size() >= AES_GCM_KEY_LEN * 2)
                     {
-                        std::cout << "[SERVER] Client initiated rekey" << std::endl;
+                        aes_keys = new_key_material;
 
-                        aes_keys = rekey_srv(tcp_socket, qkd_ip);
+                        key_decrypt.assign(
+                            aes_keys.begin(),
+                            aes_keys.begin() + AES_GCM_KEY_LEN);
 
-                        std::cout << "[SERVER] Rekey complete" << std::endl;
+                        key_encrypt.assign(
+                            aes_keys.begin() + AES_GCM_KEY_LEN,
+                            aes_keys.begin() + (AES_GCM_KEY_LEN * 2));
+
+                        std::cout << "Rekey completed & keys updated" << std::endl;
+                    }
+                    else
+                    {
+                        std::cerr << "Rekey returned insufficient key length" << std::endl;
                     }
 
-                    // *** RESTORE NON-BLOCKING MODE ***
-                    fcntl(tcp_socket, F_SETFL, O_NONBLOCK);
-                
+
+                    fcntl(tcp_socket.native_handle(), F_SETFL, flags | O_NONBLOCK);
+
+                    continue;
+                }
             }
 
             // Process TUN and UDP traffic (these are non-blocking calls)
