@@ -1317,17 +1317,6 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
 }
 
 
-bool read_framed_message_blocking(tcp::socket& sock, std::string& out, boost::system::error_code& ec) {
-    uint32_t len_net = 0;
-    size_t n = boost::asio::read(sock, boost::asio::buffer(&len_net, sizeof(len_net)), ec);
-    if (ec || n != sizeof(len_net)) return false;
-    uint32_t len = ntohl(len_net);
-    if (len == 0) { out.clear(); return true; }
-    out.resize(len);
-    n = boost::asio::read(sock, boost::asio::buffer(&out[0], len), ec);
-    if (ec || n != len) return false;
-    return true;
-}
 void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, int tundesc, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
 {
     std::vector<unsigned char> aes_keys;
@@ -1446,6 +1435,9 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
             boost::system::error_code ec;
             if (FD_ISSET(tcp_native, &fds))
             {
+                std::cout << "TCP activity detected\n";
+                char cmd_buf[1024];
+                size_t cmd_len = tcp_socket.read_some(boost::asio::buffer(cmd_buf), ec);
                 // Temporarily block to read a framed command atomically
                 tcp_socket.non_blocking(false, ec);
                 if (ec)
@@ -1453,8 +1445,9 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                     std::cerr << "non_blocking(false) failed: " << ec.message() << "\n";
                 }
                 std::string cmd;
-                if (read_framed_message_blocking(tcp_socket, cmd, ec))
-                {
+                if (!ec && cmd_len > 0)
+                {   
+                    std::string cmd(cmd_buf, cmd_len);
                     if (cmd == "REKEY_CLIENT_INITIATED")
                     {
                         std::cout << "Client requested rekey\n";
