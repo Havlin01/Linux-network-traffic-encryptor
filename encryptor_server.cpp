@@ -1399,6 +1399,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         udp_socket.non_blocking(true);
 
         std::atomic<int> read_order(1), send_order(1);
+        int tundesc = tun_open();
         std::vector<unsigned char> key_decrypt(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
         std::vector<unsigned char> key_encrypt(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
 
@@ -1432,68 +1433,28 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
             }
 
             boost::system::error_code ec;
-            if (FD_ISSET(tcp_native, &fds))
+            char cmd_buf[1024] = {0};
+            size_t cmd_len = tcp_socket.read_some(boost::asio::buffer(cmd_buf), ec);
+            if (!ec && cmd_len > 0)
             {
-                try
+                std::string cmd(cmd_buf, cmd_len);
+                if (cmd == "REKEY_CLIENT_INITIATED")
                 {
-                    // Use the correct framed message receiver
-                    std::string cmd = receive_framed_message(tcp_socket);
-
-                    if (cmd == "REKEY_CLIENT_INITIATED")
-                    {
-                        std::cout << "Client requested rekey\n";
-                        // Temporarily set socket to blocking for synchronous rekey protocol
-                        tcp_socket.non_blocking(false, ec);
-                        aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-                        // Restore non-blocking mode for the main loop
-                        tcp_socket.non_blocking(true, ec);
-
-                        if (!aes_keys.empty())
-                        {
-                            key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
-                            key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
-                        }
-                    }
+                    std::cout << "Client requested rekey\n";
+                    aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+                    key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
+                    key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
                 }
-                catch (const boost::system::system_error &e)
+                else if (cmd == "exit")
                 {
-                    if (e.code() == boost::asio::error::would_block)
-                    {
-                        // No full message available yet, continue loop
-                    }
-                    else
-                    {
-                        std::cerr << "TCP error: " << ec.message() << "\n";
-                        break;
-                    }
+                    std::cout << "Client requested exit\n";
+                    break;
                 }
-
-                // 2. Process TUN->UDP traffic (if select indicated activity)
-                if (FD_ISSET(tundesc, &fds))
-                {
-                    if (E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order))
-                    {
-                        last_udp_send_time = std::chrono::steady_clock::now();
-                    }
-                }
-
-                // 3. Process UDP->TUN traffic (if select indicated activity)
-                if (FD_ISSET(udp_native, &fds))
-                {
-                    D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
-                }
-
-                // 4. Handle keep-alive for idle connections
-                if (ret == 0)
-                { // This means select() timed out, i.e., no activity
-                    // No traffic, check if we need to send a keep-alive
-                    auto now = std::chrono::steady_clock::now();
-                    if (now - last_udp_send_time > keepalive_interval)
-                    {
-                        udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_client), client_udp_ep);
-                        last_udp_send_time = now;
-                    }
-                }
+            }
+            else if (ec != boost::asio::error::would_block)
+            {
+                std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
+                break;
             }
 
             // 2. Process TUN->UDP traffic (if select indicated activity)
@@ -1521,6 +1482,33 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                     udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_client), client_udp_ep);
                     last_udp_send_time = now;
                 }
+            }
+        }
+
+        // 2. Process TUN->UDP traffic (if select indicated activity)
+        if (FD_ISSET(tundesc, &fds))
+        {
+            if (E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order))
+            {
+                last_udp_send_time = std::chrono::steady_clock::now();
+            }
+        }
+
+        // 3. Process UDP->TUN traffic (if select indicated activity)
+        if (FD_ISSET(udp_native, &fds))
+        {
+            D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
+        }
+
+        // 4. Handle keep-alive for idle connections
+        if (ret == 0)
+        { // This means select() timed out, i.e., no activity
+            // No traffic, check if we need to send a keep-alive
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_udp_send_time > keepalive_interval)
+            {
+                udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_client), client_udp_ep);
+                last_udp_send_time = now;
             }
         }
     }
