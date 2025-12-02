@@ -57,10 +57,10 @@ using std::string;
 #include "assert.h"
 #include <mutex>
 
-std::string to_hex_snippet(const std::vector<uint8_t>& data, size_t len = 32);
+std::string to_hex_snippet(const std::vector<uint8_t> &data, size_t len = 32);
 
-std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data);
-std::vector<uint8_t> sha3_512(const std::vector<uint8_t>& data);
+std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t> &key, const std::vector<uint8_t> &data);
+std::vector<uint8_t> sha3_512(const std::vector<uint8_t> &data);
 
 string xy_str;
 string kyber_cipher_data_str;
@@ -315,7 +315,8 @@ string data_recieve(udp::socket &socket, udp::endpoint &remote_endpoint)
 
 const std::string keepalive_msg_from_client = "KEEPALIVE_C";
 
-bool is_keepalive_from_client(const std::string& msg) {
+bool is_keepalive_from_client(const std::string &msg)
+{
     return msg == keepalive_msg_from_client;
 }
 
@@ -457,7 +458,8 @@ bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
 {
     string data;
     string encrypted_data = data_recieve(socket, remote_endpoint);
-    if (is_keepalive_from_client(encrypted_data)) {
+    if (is_keepalive_from_client(encrypted_data))
+    {
         // It's just a keep-alive from the client, ignore it and report no real data.
         return false;
     }
@@ -543,15 +545,18 @@ std::string to_hex(const std::vector<uint8_t> &data)
     return ss.str();
 }
 
-std::string to_hex_snippet(const std::vector<uint8_t>& data, size_t len) {
+std::string to_hex_snippet(const std::vector<uint8_t> &data, size_t len)
+{
     std::stringstream ss;
     ss << std::hex << std::uppercase << std::setfill('0');
 
     size_t count = std::min(data.size(), len);
-    for (size_t i = 0; i < count; ++i) {
+    for (size_t i = 0; i < count; ++i)
+    {
         ss << std::setw(2) << static_cast<int>(data[i]);
     }
-    if (data.size() > len) {
+    if (data.size() > len)
+    {
         ss << "...";
     }
     return ss.str();
@@ -587,7 +592,7 @@ std::vector<uint8_t> hex_to_bytes(const std::string &hex)
     return bytes;
 }
 
-std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data)
+std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t> &key, const std::vector<uint8_t> &data)
 {
     EVP_PKEY *pkey = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, nullptr,
                                           key.data(), key.size());
@@ -626,7 +631,8 @@ std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key, const std::vec
     return digest;
 }
 
-std::vector<uint8_t> sha3_512(const std::vector<uint8_t>& data) {
+std::vector<uint8_t> sha3_512(const std::vector<uint8_t> &data)
+{
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (!mdctx)
         return {};
@@ -825,12 +831,14 @@ bool decapsulate_kyber768(EVP_PKEY *private_key,
     return true;
 }
 
-struct PQCKeyMaterial {
+struct PQCKeyMaterial
+{
     std::vector<uint8_t> shared_secret;
     std::vector<uint8_t> ciphertext;
 };
 
-struct ECDHKeyMaterial {
+struct ECDHKeyMaterial
+{
     std::vector<uint8_t> shared_secret;
     std::vector<uint8_t> peer_pubkey;
     std::vector<uint8_t> own_pubkey;
@@ -1197,12 +1205,15 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         std::vector<uint8_t> p1_input = pqc_material.ciphertext;
         p1_input.insert(p1_input.end(), pqc_material.shared_secret.begin(), pqc_material.shared_secret.end());
         auto p1 = sha3_512(p1_input);
-        
+
         std::vector<uint8_t> p2_input;
-        if (ecdh_material.own_pubkey < ecdh_material.peer_pubkey) {
+        if (ecdh_material.own_pubkey < ecdh_material.peer_pubkey)
+        {
             p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
             p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
-        } else {
+        }
+        else
+        {
             p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
             p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
         }
@@ -1218,8 +1229,9 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         auto final_digest = sha3_512(hybrid_key);
         std::cout << "DEBUG: final_digest(hex) = " << to_hex(final_digest) << std::endl;
 
-        if (sec_key.size() > final_digest.size()) {
-             throw std::runtime_error("Session key buffer is larger than the derived digest.");
+        if (sec_key.size() > final_digest.size())
+        {
+            throw std::runtime_error("Session key buffer is larger than the derived digest.");
         }
         std::copy_n(final_digest.begin(), sec_key.size(), sec_key.begin());
 
@@ -1253,10 +1265,13 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         auto p1 = sha3_512(p1_input);
 
         std::vector<uint8_t> p2_input;
-        if (ecdh_material.own_pubkey < ecdh_material.peer_pubkey) {
+        if (ecdh_material.own_pubkey < ecdh_material.peer_pubkey)
+        {
             p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
             p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
-        } else {
+        }
+        else
+        {
             p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
             p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
         }
@@ -1274,14 +1289,21 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         auto hybrid_key = xorVectors(xorVectors(s1, s2), s3);
         auto final_digest = sha3_512(hybrid_key);
 
-        if (sec_key.size() > final_digest.size()) {
-             throw std::runtime_error("Session key buffer is larger than the derived digest.");
+        if (sec_key.size() > final_digest.size())
+        {
+            throw std::runtime_error("Session key buffer is larger than the derived digest.");
         }
         std::copy_n(final_digest.begin(), sec_key.size(), sec_key.begin());
 
-        OPENSSL_cleanse(k1.data(), k1.size()); OPENSSL_cleanse(k2.data(), k2.size()); OPENSSL_cleanse(k3.data(), k3.size());
-        OPENSSL_cleanse(p1.data(), p1.size()); OPENSSL_cleanse(p2.data(), p2.size()); OPENSSL_cleanse(p3.data(), p3.size());
-        OPENSSL_cleanse(s1.data(), s1.size()); OPENSSL_cleanse(s2.data(), s2.size()); OPENSSL_cleanse(s3.data(), s3.size());
+        OPENSSL_cleanse(k1.data(), k1.size());
+        OPENSSL_cleanse(k2.data(), k2.size());
+        OPENSSL_cleanse(k3.data(), k3.size());
+        OPENSSL_cleanse(p1.data(), p1.size());
+        OPENSSL_cleanse(p2.data(), p2.size());
+        OPENSSL_cleanse(p3.data(), p3.size());
+        OPENSSL_cleanse(s1.data(), s1.size());
+        OPENSSL_cleanse(s2.data(), s2.size());
+        OPENSSL_cleanse(s3.data(), s3.size());
         OPENSSL_cleanse(hybrid_key.data(), hybrid_key.size());
         OPENSSL_cleanse(final_digest.data(), final_digest.size());
         OPENSSL_cleanse(pqc_material.shared_secret.data(), pqc_material.shared_secret.size());
@@ -1293,12 +1315,13 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         return sec_key;
     }
 }
-void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, int tundesc, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
-{   
+void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, int tundesc, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
+{
     std::vector<unsigned char> aes_keys;
     udp::socket udp_socket(io_context);
 
-    try {
+    try
+    {
         std::cout << "New client connected: " << tcp_socket.remote_endpoint().address() << "\n";
 
         const std::string ready_msg = "READY";
@@ -1311,28 +1334,34 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
         boost::system::error_code ec;
         // Use boost::asio::read to ensure we read exactly the expected number of bytes.
         size_t init_len = boost::asio::read(tcp_socket, boost::asio::buffer(init_buf), ec);
-        if (ec) {
+        if (ec)
+        {
             std::cerr << "Error during initial INIT_REKEY read: " << ec.message() << "\n";
             tcp_socket.close();
             return;
         }
-        if (init_len == 0) {
+        if (init_len == 0)
+        {
             std::cerr << "Client closed connection before sending INIT_REKEY\n";
             tcp_socket.close();
             return;
         }
 
         std::string init_msg(init_buf.begin(), init_buf.end());
-        if (init_msg == expected_init_msg) {
+        if (init_msg == expected_init_msg)
+        {
             aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
             std::cout << "Initial rekey done, keys established\n";
-        } else {
+        }
+        else
+        {
             std::cerr << "Unexpected initial command: " << init_msg << "\n";
             tcp_socket.close();
             return;
         }
 
-        if (aes_keys.size() < AES_GCM_KEY_LEN * 2) {
+        if (aes_keys.size() < AES_GCM_KEY_LEN * 2)
+        {
             std::cerr << "Key establishment failed or keys are too short. Closing connection.\n";
             tcp_socket.close();
             return;
@@ -1343,7 +1372,7 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
         udp_socket.bind(udp::endpoint(udp::v4(), 0));
         udp::endpoint client_udp_ep;
         unsigned short udp_port = udp_socket.local_endpoint().port();
-        std::cout << "Client " << tcp_socket.remote_endpoint().address() 
+        std::cout << "Client " << tcp_socket.remote_endpoint().address()
                   << " assigned to dedicated UDP port: " << udp_port << std::endl;
 
         // Send the new UDP port to the client over TCP
@@ -1376,7 +1405,8 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
         auto last_udp_send_time = std::chrono::steady_clock::now();
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
-        while (true) {
+        while (true)
+        {
             // Use select() to wait for activity on any socket or a timeout.
             fd_set fds;
             FD_ZERO(&fds);
@@ -1394,66 +1424,84 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
             struct timeval tv = {0, 100000}; // 100ms timeout
             int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
 
-            if (ret < 0) {
+            if (ret < 0)
+            {
                 perror("select() error");
                 break;
             }
 
             boost::system::error_code ec;
-            // 1. Check for TCP commands from client (only if select indicated activity)
-            if (FD_ISSET(tcp_native, &fds)) {
-                char cmd_buf[1024] = {0};
-                size_t cmd_len = tcp_socket.read_some(boost::asio::buffer(cmd_buf), ec);
-                if (!ec && cmd_len > 0) {
-                    std::string cmd(cmd_buf, cmd_len);
-                    std::cout << cmd;
-                    if (cmd == "REKEY_CLIENT_INITIATED") {
+            if (FD_ISSET(tcp_native, &fds))
+            {
+                // Temporarily block to read a framed command atomically
+                tcp_socket.non_blocking(false, ec);
+                if (ec)
+                {
+                    std::cerr << "non_blocking(false) failed: " << ec.message() << "\n";
+                }
+                std::string cmd;
+                if (read_framed_message_blocking(tcp_socket, cmd, ec))
+                {
+                    if (cmd == "REKEY_CLIENT_INITIATED")
+                    {
                         std::cout << "Client requested rekey\n";
-                        // Temporarily set socket to blocking for synchronous rekey protocol
-                        tcp_socket.non_blocking(false, ec);
                         aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-                        // Restore non-blocking mode for the main loop
-                        tcp_socket.non_blocking(true, ec);
-
-                        if (!aes_keys.empty()) {
+                        if (!aes_keys.empty())
+                        {
                             key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
                             key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
                         }
-                    } else if (cmd == "exit") {
+                    }
+                    else if (cmd == "exit")
+                    {
                         std::cout << "Client requested exit\n";
                         break;
                     }
-                } else if (ec != boost::asio::error::would_block) {
-                    std::cerr << "TCP error: " << ec.message() << "\n";
-                    break;
+                    else
+                    {
+                        std::cout << "TCP command: [" << cmd << "]\n";
+                    }
                 }
+                else
+                {
+                    if (ec)
+                        std::cerr << "Framed read error: " << ec.message() << "\n";
+                    else
+                        std::cerr << "Framed read returned false\n";
+                }
+                tcp_socket.non_blocking(true, ec);
             }
 
             // 2. Process TUN->UDP traffic (if select indicated activity)
-            if (FD_ISSET(tundesc, &fds)) {
-                if (E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order)) {
+            if (FD_ISSET(tundesc, &fds))
+            {
+                if (E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order))
+                {
                     last_udp_send_time = std::chrono::steady_clock::now();
                 }
             }
 
             // 3. Process UDP->TUN traffic (if select indicated activity)
-            if (FD_ISSET(udp_native, &fds)) {
+            if (FD_ISSET(udp_native, &fds))
+            {
                 D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
             }
 
             // 4. Handle keep-alive for idle connections
-            if (ret == 0) { // This means select() timed out, i.e., no activity
+            if (ret == 0)
+            { // This means select() timed out, i.e., no activity
                 // No traffic, check if we need to send a keep-alive
                 auto now = std::chrono::steady_clock::now();
-                if (now - last_udp_send_time > keepalive_interval) {
+                if (now - last_udp_send_time > keepalive_interval)
+                {
                     udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_client), client_udp_ep);
                     last_udp_send_time = now;
                 }
             }
         }
-
     }
-    catch (const std::exception &e) {
+    catch (const std::exception &e)
+    {
         std::cerr << "Server exception: " << e.what() << "\n";
     }
 
@@ -1463,19 +1511,22 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
     udp_socket.close();
 }
 
-void reap_threads(std::vector<std::thread>& threads) {
-    threads.erase(std::remove_if(threads.begin(), threads.end(), 
-        [](std::thread& t) {
-            if (t.joinable()) {
-                t.join(); 
-                return true; 
-            }
-            return false;
-        }), threads.end());
+void reap_threads(std::vector<std::thread> &threads)
+{
+    threads.erase(std::remove_if(threads.begin(), threads.end(),
+                                 [](std::thread &t)
+                                 {
+                                     if (t.joinable())
+                                     {
+                                         t.join();
+                                         return true;
+                                     }
+                                     return false;
+                                 }),
+                  threads.end());
 }
 
-
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
     std::string qkd_ip;
     if (argc > 2)
@@ -1487,41 +1538,54 @@ int main(int argc, char* argv[])
     {
         qkd_ip = argv[1];
     }
-    
 
-    if (!OPENSSL_init_crypto(0, nullptr)) return 1;
+    if (!OPENSSL_init_crypto(0, nullptr))
+        return 1;
     OSSL_PROVIDER *defprov = OSSL_PROVIDER_load(nullptr, "default");
 
     int choice;
     std::string chosen_pqc_alg;
     std::cout << "Choose PQC Algorithm:\n1. MLKEM768 (Kyber768)\n2. HQC-128\nEnter choice: ";
     std::cin >> choice;
-    switch (choice) {
-        case 1: chosen_pqc_alg = "ML-KEM-768"; break;
-        case 2: chosen_pqc_alg = "hqc-128"; break;
-        default: std::cerr << "Invalid choice, defaulting to Kyber768\n"; chosen_pqc_alg = "ML-KEM-768"; break;
+    switch (choice)
+    {
+    case 1:
+        chosen_pqc_alg = "ML-KEM-768";
+        break;
+    case 2:
+        chosen_pqc_alg = "hqc-128";
+        break;
+    default:
+        std::cerr << "Invalid choice, defaulting to Kyber768\n";
+        chosen_pqc_alg = "ML-KEM-768";
+        break;
     }
     std::cout << "Selected PQC Algorithm: " << chosen_pqc_alg << std::endl;
 
     // --- TUN device setup ---
     // The TUN device is created once and shared by all client threads.
     int tundesc = -1;
-    try {
+    try
+    {
         tundesc = tun_open();
         std::cout << "TUN device tun0 opened successfully.\n";
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Fatal error creating TUN device: " << e.what() << std::endl;
         return 1;
     }
 
-    try {
+    try
+    {
         boost::asio::io_context io_context;
         tcp::acceptor acceptor(io_context, tcp::endpoint(tcp::v4(), KEYPORT));
         std::cout << "Server TCP listening on port " << KEYPORT << std::endl;
 
         std::vector<std::thread> client_threads;
 
-        while (true) {
+        while (true)
+        {
             tcp::socket socket(io_context);
             acceptor.accept(socket);
 
@@ -1529,20 +1593,24 @@ int main(int argc, char* argv[])
 
             // Move the socket into the thread context to ensure proper ownership.
             client_threads.emplace_back(
-                [&io_context, s = std::move(socket), tundesc, chosen_pqc_alg, qkd_ip]() mutable {
+                [&io_context, s = std::move(socket), tundesc, chosen_pqc_alg, qkd_ip]() mutable
+                {
                     handle_client(io_context, std::move(s), tundesc, chosen_pqc_alg, qkd_ip);
-                }
-            );
+                });
         }
-    } catch (const std::exception &e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Server exception: " << e.what() << std::endl;
         return 1;
     }
 
-    if (tundesc != -1) {
+    if (tundesc != -1)
+    {
         close(tundesc);
     }
 
-    if (defprov) OSSL_PROVIDER_unload(defprov);
+    if (defprov)
+        OSSL_PROVIDER_unload(defprov);
     return 0;
 }
