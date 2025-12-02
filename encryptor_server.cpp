@@ -1315,6 +1315,19 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
         return sec_key;
     }
 }
+
+
+bool read_framed_message_blocking(tcp::socket& sock, std::string& out, boost::system::error_code& ec) {
+    uint32_t len_net = 0;
+    size_t n = boost::asio::read(sock, boost::asio::buffer(&len_net, sizeof(len_net)), ec);
+    if (ec || n != sizeof(len_net)) return false;
+    uint32_t len = ntohl(len_net);
+    if (len == 0) { out.clear(); return true; }
+    out.resize(len);
+    n = boost::asio::read(sock, boost::asio::buffer(&out[0], len), ec);
+    if (ec || n != len) return false;
+    return true;
+}
 void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, int tundesc, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
 {
     std::vector<unsigned char> aes_keys;
