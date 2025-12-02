@@ -1406,45 +1406,54 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         auto last_udp_send_time = std::chrono::steady_clock::now();
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
-        while (true) {
+        while (true)
+        {
 
             char peek_buf[1];
             boost::system::error_code ec;
             tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
 
-            if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset) {
-                 std::cerr << "TCP connection closed by peer.\n";
-                 break;
-            } else if (ec != boost::asio::error::would_block && ec) {
-                 std::cerr << "TCP error on poll: " << ec.message() << "\n";
-                 break;
+            if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset)
+            {
+                std::cerr << "TCP connection closed by peer.\n";
+                break;
+            }
+            else if (ec != boost::asio::error::would_block && ec)
+            {
+                std::cerr << "TCP error on poll: " << ec.message() << "\n";
+                break;
             }
 
             // If there's data to be read (would_block is not set), process it.
-            if (tcp_socket.available() > 0)
+            if (tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec) > 0)
             {
-                try
+                if (status > 0)
                 {
-                    std::string cmd = receive_framed_message(tcp_socket);
-                    std::cout << "Received TCP command: " << cmd << "\n";
-                    if (cmd == "REKEY_CLIENT_INITIATED")
-                    {
-                        std::cout << "Client requested rekey\n";
-                        aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+                    boost::system::error_code ec;
 
-                        if (!aes_keys.empty())
+                    // *** FORCE BLOCKING MODE ***
+                    fcntl(new_socket, F_SETFL, fcntl(new_socket, F_GETFL, 0) & ~O_NONBLOCK);
+
+                    // Decode REKEY command (unframed)
+                    bufferTCP[status] = '\0';
+
+                    if (std::string(bufferTCP) == "CLIENT_INITIATED_REKEY")
+                    {
+                        std::cout << "[SERVER] Client initiated rekey" << std::endl;
+
+                        // Perform rekey (same function as initial)
+                        if (argv[1] != NULL)
                         {
-                            key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
-                            key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
+                            get_qkdkey(qkd_ip, bufferTCP);
                         }
-                    } else if (!cmd.empty()) {
-                        std::cerr << "Received unknown TCP command: " << cmd << "\n";
+
+                        key = rekey_srv(new_socket, qkd_ip);
+
+                        std::cout << "[SERVER] Rekey complete" << std::endl;
                     }
-                }
-                catch (const boost::system::system_error &e)
-                {
-                    std::cerr << "TCP error during receive: " << e.what() << "\n";
-                    break;
+
+                    // *** RESTORE NON-BLOCKING MODE ***
+                    fcntl(new_socket, F_SETFL, O_NONBLOCK);
                 }
             }
 
@@ -1459,7 +1468,8 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         tcp_socket.close();
         udp_socket.close();
     }
-    catch (const std::exception &e) {
+    catch (const std::exception &e)
+    {
         std::cerr << "Server exception: " << e.what() << "\n";
     }
 }

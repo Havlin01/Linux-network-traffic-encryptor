@@ -59,10 +59,10 @@ using std::string;
 #include <mutex>
 #include <vector>
 
-std::string to_hex_snippet(const std::vector<uint8_t>& data, size_t len = 32);
+std::string to_hex_snippet(const std::vector<uint8_t> &data, size_t len = 32);
 
-std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data);
-std::vector<uint8_t> sha3_512(const std::vector<uint8_t>& data);
+std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t> &key, const std::vector<uint8_t> &data);
+std::vector<uint8_t> sha3_512(const std::vector<uint8_t> &data);
 
 string xy_str;
 string kyber_cipher_data_str;
@@ -295,7 +295,8 @@ string data_recieve(udp::socket &socket, udp::endpoint &remote_endpoint)
 
 const std::string keepalive_msg_from_server = "KEEPALIVE_S";
 
-bool is_keepalive_from_server(const std::string& msg) {
+bool is_keepalive_from_server(const std::string &msg)
+{
     return msg == keepalive_msg_from_server;
 }
 
@@ -437,7 +438,8 @@ bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
 {
     string data;
     string encrypted_data = data_recieve(socket, remote_endpoint);
-    if (is_keepalive_from_server(encrypted_data)) {
+    if (is_keepalive_from_server(encrypted_data))
+    {
         // It's just a keep-alive from the server, ignore it and report no real data.
         return false;
     }
@@ -523,15 +525,18 @@ std::string to_hex(const std::vector<uint8_t> &data)
     return ss.str();
 }
 
-std::string to_hex_snippet(const std::vector<uint8_t>& data, size_t len) {
+std::string to_hex_snippet(const std::vector<uint8_t> &data, size_t len)
+{
     std::stringstream ss;
     ss << std::hex << std::uppercase << std::setfill('0');
 
     size_t count = std::min(data.size(), len);
-    for (size_t i = 0; i < count; ++i) {
+    for (size_t i = 0; i < count; ++i)
+    {
         ss << std::setw(2) << static_cast<int>(data[i]);
     }
-    if (data.size() > len) {
+    if (data.size() > len)
+    {
         ss << "...";
     }
     return ss.str();
@@ -569,7 +574,7 @@ std::vector<uint8_t> hex_to_bytes(const std::string &hex)
     return bytes;
 }
 
-std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data)
+std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t> &key, const std::vector<uint8_t> &data)
 {
     EVP_PKEY *pkey = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, nullptr,
                                           key.data(), key.size());
@@ -608,7 +613,8 @@ std::vector<uint8_t> hmac_sha512(const std::vector<uint8_t>& key, const std::vec
     return digest;
 }
 
-std::vector<uint8_t> sha3_512(const std::vector<uint8_t>& data) {
+std::vector<uint8_t> sha3_512(const std::vector<uint8_t> &data)
+{
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (!mdctx)
         return {};
@@ -633,16 +639,16 @@ std::vector<uint8_t> xorVectors(const std::vector<uint8_t> &a, const std::vector
     return result;
 }
 
-EVP_PKEY* create_pqc_pubkey_from_raw(const std::string& alg_name, const std::vector<uint8_t>& raw_pkey)
+EVP_PKEY *create_pqc_pubkey_from_raw(const std::string &alg_name, const std::vector<uint8_t> &raw_pkey)
 {
-    EVP_PKEY* pkey = EVP_PKEY_new_raw_public_key_ex(
+    EVP_PKEY *pkey = EVP_PKEY_new_raw_public_key_ex(
         /*libctx=*/NULL,
-        alg_name.c_str(),     // "ML-KEM-768"
+        alg_name.c_str(), // "ML-KEM-768"
         /*propq=*/NULL,
         raw_pkey.data(),
-        raw_pkey.size()
-    );
-    if (!pkey) {
+        raw_pkey.size());
+    if (!pkey)
+    {
         std::cerr << "Error: EVP_PKEY_new_raw_public_key_ex failed.\n";
         ERR_print_errors_fp(stderr);
         return nullptr;
@@ -650,12 +656,14 @@ EVP_PKEY* create_pqc_pubkey_from_raw(const std::string& alg_name, const std::vec
     return pkey;
 }
 
-struct PQCKeyMaterial {
+struct PQCKeyMaterial
+{
     std::vector<uint8_t> shared_secret;
     std::vector<uint8_t> ciphertext;
 };
 
-struct ECDHKeyMaterial {
+struct ECDHKeyMaterial
+{
     std::vector<uint8_t> shared_secret;
     std::vector<uint8_t> own_pubkey;
     std::vector<uint8_t> peer_pubkey;
@@ -771,7 +779,8 @@ PQCKeyMaterial get_pqckey(tcp::socket &client_socket, const std::string &alg_nam
     {
         std::cerr << "Error: EVP_PKEY_encapsulate_init failed.\n";
         ERR_print_errors_fp(stderr);
-        if (ctx) EVP_PKEY_CTX_free(ctx);
+        if (ctx)
+            EVP_PKEY_CTX_free(ctx);
         EVP_PKEY_free(server_pqc_pubkey);
         return {};
     }
@@ -1063,7 +1072,10 @@ string get_qkdkey(string qkd_ip, tcp::socket &client_socket)
     // Hash content of bufferTCP with SHAKE128 using OpenSSL
     std::vector<unsigned char> shake_output(216);
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
-    if (!mdctx) { /* handle error */ return ""; }
+    if (!mdctx)
+    { /* handle error */
+        return "";
+    }
 
     const EVP_MD *shake128 = EVP_shake128();
     EVP_DigestInit_ex(mdctx, shake128, NULL);
@@ -1101,7 +1113,8 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     std::cout << "DEBUG: salt(hex) = " << to_hex(salt_bytes) << std::endl;
 
     PQCKeyMaterial pqc_material = get_pqckey(client_socket, chosen_pqc_alg);
-    if (pqc_material.shared_secret.empty()) {
+    if (pqc_material.shared_secret.empty())
+    {
         std::cerr << "Client: PQC key derivation failed.\n";
         return {};
     }
@@ -1110,7 +1123,8 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     std::cout << "DEBUG: PQC ciphertext(hex) = " << to_hex_snippet(pqc_material.ciphertext) << std::endl;
 
     ECDHKeyMaterial ecdh_material = PerformECDHKeyExchange(client_socket);
-    if (ecdh_material.shared_secret.empty()) {
+    if (ecdh_material.shared_secret.empty())
+    {
         std::cerr << "Client: ECDH key derivation failed.\n";
         return {};
     }
@@ -1127,10 +1141,13 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
         auto p1 = sha3_512(p1_input);
 
         std::vector<uint8_t> p2_input;
-        if (ecdh_material.own_pubkey < ecdh_material.peer_pubkey) {
+        if (ecdh_material.own_pubkey < ecdh_material.peer_pubkey)
+        {
             p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
             p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
-        } else {
+        }
+        else
+        {
             p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
             p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
         }
@@ -1146,8 +1163,9 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
         auto final_digest = sha3_512(hybrid_key);
         std::cout << "DEBUG: final_digest(hex) = " << to_hex(final_digest) << std::endl;
 
-        if (sec_key.size() > final_digest.size()) {
-             throw std::runtime_error("Session key buffer is larger than the derived digest.");
+        if (sec_key.size() > final_digest.size())
+        {
+            throw std::runtime_error("Session key buffer is larger than the derived digest.");
         }
         std::copy_n(final_digest.begin(), sec_key.size(), sec_key.begin());
 
@@ -1167,7 +1185,7 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
         return sec_key;
     }
     else
-    {   
+    {
         buffer_str = get_qkdkey(qkd_ip, client_socket);
         std::vector<uint8_t> qkd_key_bytes(buffer_str.begin(), buffer_str.end());
         std::vector<uint8_t> qkd_param_bytes(qkd_parameter.begin(), qkd_parameter.end());
@@ -1181,10 +1199,13 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
         auto p1 = sha3_512(p1_input);
 
         std::vector<uint8_t> p2_input;
-        if (ecdh_material.own_pubkey < ecdh_material.peer_pubkey) {
+        if (ecdh_material.own_pubkey < ecdh_material.peer_pubkey)
+        {
             p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
             p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
-        } else {
+        }
+        else
+        {
             p2_input.insert(p2_input.end(), ecdh_material.peer_pubkey.begin(), ecdh_material.peer_pubkey.end());
             p2_input.insert(p2_input.end(), ecdh_material.own_pubkey.begin(), ecdh_material.own_pubkey.end());
         }
@@ -1202,14 +1223,21 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
         auto hybrid_key = xorVectors(xorVectors(s1, s2), s3);
         auto final_digest = sha3_512(hybrid_key);
 
-        if (sec_key.size() > final_digest.size()) {
-             throw std::runtime_error("Session key buffer is larger than the derived digest.");
+        if (sec_key.size() > final_digest.size())
+        {
+            throw std::runtime_error("Session key buffer is larger than the derived digest.");
         }
         std::copy_n(final_digest.begin(), sec_key.size(), sec_key.begin());
 
-        OPENSSL_cleanse(k1.data(), k1.size()); OPENSSL_cleanse(k2.data(), k2.size()); OPENSSL_cleanse(k3.data(), k3.size());
-        OPENSSL_cleanse(p1.data(), p1.size()); OPENSSL_cleanse(p2.data(), p2.size()); OPENSSL_cleanse(p3.data(), p3.size());
-        OPENSSL_cleanse(s1.data(), s1.size()); OPENSSL_cleanse(s2.data(), s2.size()); OPENSSL_cleanse(s3.data(), s3.size());
+        OPENSSL_cleanse(k1.data(), k1.size());
+        OPENSSL_cleanse(k2.data(), k2.size());
+        OPENSSL_cleanse(k3.data(), k3.size());
+        OPENSSL_cleanse(p1.data(), p1.size());
+        OPENSSL_cleanse(p2.data(), p2.size());
+        OPENSSL_cleanse(p3.data(), p3.size());
+        OPENSSL_cleanse(s1.data(), s1.size());
+        OPENSSL_cleanse(s2.data(), s2.size());
+        OPENSSL_cleanse(s3.data(), s3.size());
         OPENSSL_cleanse(hybrid_key.data(), hybrid_key.size());
         OPENSSL_cleanse(final_digest.data(), final_digest.size());
         OPENSSL_cleanse(pqc_material.shared_secret.data(), pqc_material.shared_secret.size());
@@ -1222,34 +1250,48 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     }
 }
 
-int main(int argc, char* argv[]) {
-    if (argc < 1 || argc > 3) {
+int main(int argc, char *argv[])
+{
+    if (argc < 1 || argc > 3)
+    {
         help();
-        return 1; 
+        return 1;
     }
-    const char* srv_ip = argv[1];
+    const char *srv_ip = argv[1];
     std::string qkd_ip;
-    if (argc == 3) {
+    if (argc == 3)
+    {
         qkd_ip = argv[2];
     }
     int choice;
     std::string chosen_pqc_alg;
     std::cout << "Choose PQC Algorithm:\n1. MLKEM768 (Kyber768)\n2. HQC-128\nEnter choice: ";
     std::cin >> choice;
-    switch (choice) {
-        case 1: chosen_pqc_alg = "ML-KEM-768"; break;
-        case 2: chosen_pqc_alg = "hqc-128"; break;
-        default: std::cerr << "Invalid choice, defaulting to Kyber768\n"; chosen_pqc_alg = "ML-KEM-768"; break;
+    switch (choice)
+    {
+    case 1:
+        chosen_pqc_alg = "ML-KEM-768";
+        break;
+    case 2:
+        chosen_pqc_alg = "hqc-128";
+        break;
+    default:
+        std::cerr << "Invalid choice, defaulting to Kyber768\n";
+        chosen_pqc_alg = "ML-KEM-768";
+        break;
     }
     std::cout << "Selected PQC Algorithm: " << chosen_pqc_alg << std::endl;
 
     // --- TUN device setup ---
     // The TUN device is created once and persists for the application's lifetime.
     int tundesc = -1;
-    try {
+    try
+    {
         tundesc = tun_open();
         std::cout << "TUN device tun0 opened successfully.\n";
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Fatal error creating TUN device: " << e.what() << std::endl;
         return 1;
     }
@@ -1259,15 +1301,17 @@ int main(int argc, char* argv[]) {
     std::atomic<bool> app_shutdown_flag{false};
     std::atomic<bool> client_rekey_flag{false};
 
-    std::thread rekey_thread([&client_rekey_flag, &app_shutdown_flag]() {
+    std::thread rekey_thread([&client_rekey_flag, &app_shutdown_flag]()
+                             {
         while (!app_shutdown_flag) { 
             std::this_thread::sleep_for(std::chrono::seconds(3));
             client_rekey_flag.store(true);
-        }
-    });
+        } });
 
-    while (true) {
-        try {
+    while (true)
+    {
+        try
+        {
             boost::asio::io_context io_context;
             tcp::socket tcp_socket(io_context);
             tcp::resolver resolver(io_context);
@@ -1283,7 +1327,7 @@ int main(int argc, char* argv[]) {
 
             std::vector<uint8_t> sec_key;
             sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, "", chosen_pqc_alg);
-            
+
             std::vector<unsigned char> key_encrypt(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
             std::vector<unsigned char> key_decrypt(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
             std::cout << "Initial rekey done, keys established\n";
@@ -1317,7 +1361,8 @@ int main(int argc, char* argv[]) {
             std::atomic<bool> shutdown_flag{false};
             std::atomic<int> read_order = 0, send_order = 1;
 
-            while (!shutdown_flag) {
+            while (!shutdown_flag)
+            {
                 // Use select() to wait for activity on any socket or a timeout.
                 // This is the core of the event loop.
                 fd_set fds;
@@ -1337,7 +1382,8 @@ int main(int argc, char* argv[]) {
                 struct timeval tv = {0, 100000}; // 100ms timeout
                 int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
 
-                if (ret < 0) {
+                if (ret < 0)
+                {
                     perror("select() error");
                     break; // Exit on select error
                 }
@@ -1346,16 +1392,25 @@ int main(int argc, char* argv[]) {
                 char tcp_buf[1024] = {0};
 
                 // 1. Check for client-initiated rekey flag (checked every loop iteration)
-                if (client_rekey_flag.load()) {
-                    std::cout << "Periodic rekey triggered by client timer.\n";
-                    // Temporarily set socket to blocking for synchronous rekey protocol
+                if (client_rekey_flag.load())
+                {
+                    boost::system::error_code ec;
+
+                    // *** FORCE BLOCKING MODE ***
                     tcp_socket.non_blocking(false, ec);
-                    send_framed_message(tcp_socket, "REKEY_CLIENT_INITIATED");
-                    std::cout << "Client-initiated rekey sent\n";
-                    client_rekey_flag.store(false);
+
+                    // Send periodic rekey request
+                    const std::string msg = "CLIENT_INITIATED_REKEY";
+                    send_framed_message(tcp_socket, msg);
+
+                    std::cout << "[CLIENT] Sent periodic rekey request" << std::endl;
+
+                    // *** RESTORE NON-BLOCKING MODE ***
+                    tcp_socket.non_blocking(true, ec);
 
                     std::string qkd_key_buffer;
-                    if (!qkd_ip.empty()) {
+                    if (!qkd_ip.empty())
+                    {
                         qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
                     }
                     sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
@@ -1363,7 +1418,8 @@ int main(int argc, char* argv[]) {
                     // Restore non-blocking mode for the main loop
                     tcp_socket.non_blocking(true, ec);
 
-                    if (sec_key.empty()) {
+                    if (sec_key.empty())
+                    {
                         std::cerr << "Client-initiated rekey failed, closing connection.\n";
                         shutdown_flag.store(true);
                         continue;
@@ -1374,14 +1430,18 @@ int main(int argc, char* argv[]) {
                 }
 
                 // 2. Check for TCP commands from server (only if select indicated activity)
-                if (FD_ISSET(tcp_native, &fds)) {
+                if (FD_ISSET(tcp_native, &fds))
+                {
                     size_t len = tcp_socket.read_some(boost::asio::buffer(tcp_buf), ec);
-                    if (!ec && len > 0) {
-                        if (std::string(tcp_buf, len) == "REKEY_SERVER_INITIATED") {
+                    if (!ec && len > 0)
+                    {
+                        if (std::string(tcp_buf, len) == "REKEY_SERVER_INITIATED")
+                        {
                             // Temporarily set socket to blocking for synchronous rekey protocol
                             tcp_socket.non_blocking(false, ec);
                             std::string qkd_key_buffer;
-                            if (!qkd_ip.empty()) {
+                            if (!qkd_ip.empty())
+                            {
                                 qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
                             }
                             sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
@@ -1389,7 +1449,8 @@ int main(int argc, char* argv[]) {
                             // Restore non-blocking mode for the main loop
                             tcp_socket.non_blocking(true, ec);
 
-                            if (sec_key.empty()) {
+                            if (sec_key.empty())
+                            {
                                 std::cerr << "Server-initiated rekey failed, closing connection.\n";
                                 shutdown_flag.store(true);
                                 continue;
@@ -1398,28 +1459,35 @@ int main(int argc, char* argv[]) {
                             key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
                             std::cout << "Server-initiated rekey completed\n";
                         }
-                    } else if (ec != boost::asio::error::would_block) {
+                    }
+                    else if (ec != boost::asio::error::would_block)
+                    {
                         std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
                         shutdown_flag.store(true); // Signal shutdown
                     }
                 }
 
                 // 3. Process TUN->UDP traffic (if select indicated activity)
-                if (FD_ISSET(tundesc, &fds)) {
-                    if (E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc, read_order, send_order)) {
+                if (FD_ISSET(tundesc, &fds))
+                {
+                    if (E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc, read_order, send_order))
+                    {
                         last_udp_send_time = std::chrono::steady_clock::now();
                     }
                 }
 
                 // 4. Process UDP->TUN traffic (if select indicated activity)
-                if (FD_ISSET(udp_native, &fds)) {
+                if (FD_ISSET(udp_native, &fds))
+                {
                     D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc, read_order, send_order);
                 }
 
                 // 5. Handle keep-alive for idle connections
-                if (ret == 0) { // This means select() timed out, i.e., no activity
+                if (ret == 0)
+                { // This means select() timed out, i.e., no activity
                     auto now = std::chrono::steady_clock::now();
-                    if (now - last_udp_send_time > keepalive_interval) {
+                    if (now - last_udp_send_time > keepalive_interval)
+                    {
                         udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_server), server_udp_ep);
                         last_udp_send_time = now;
                     }
@@ -1430,20 +1498,24 @@ int main(int argc, char* argv[]) {
             std::cout << "Connection closing. Cleaning up resources.\n";
             tcp_socket.close();
             udp_socket.close();
-        } catch (const std::exception &e) {
+        }
+        catch (const std::exception &e)
+        {
             std::cerr << "Client exception: " << e.what() << "\nRetrying in 5s...\n";
             std::this_thread::sleep_for(std::chrono::seconds(5));
         }
     }
 
     // Final cleanup when the application exits.
-    if (tundesc != -1) {
+    if (tundesc != -1)
+    {
         close(tundesc);
     }
 
     // Signal the rekey thread to shut down and wait for it to complete.
     app_shutdown_flag.store(true);
-    if (rekey_thread.joinable()) {
+    if (rekey_thread.joinable())
+    {
         rekey_thread.join();
     }
     return 0;
