@@ -1402,8 +1402,7 @@ int main(int argc, char *argv[])
                     tcp_socket.non_blocking(false, ec);
 
                     // --- send rekey request EXACTLY like initial exchange ---
-                    boost::asio::write(tcp_socket, boost::asio::buffer("REKEY_CLIENT_INITIATED"));
-                    std::cout << "Client-initiated rekey sent\n";
+                    send_framed_message(tcp_socket, "REKEY_CLIENT_INITIATED");
 
                     client_rekey_flag.store(false);
 
