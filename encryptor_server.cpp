@@ -1324,37 +1324,12 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         boost::asio::write(tcp_socket, boost::asio::buffer(ready_msg));
         std::cout << "READY sent to client\n";
 
-        // Robustly handle the initial "INIT_REKEY" message
-        const std::string expected_init_msg = "INIT_REKEY";
-        std::vector<char> init_buf(expected_init_msg.length());
-        boost::system::error_code ec;
-        // Use boost::asio::read to ensure we read exactly the expected number of bytes.
-        size_t init_len = boost::asio::read(tcp_socket, boost::asio::buffer(init_buf), ec);
-        if (ec)
-        {
-            std::cerr << "Error during initial INIT_REKEY read: " << ec.message() << "\n";
-            tcp_socket.close();
-            return;
-        }
-        if (init_len == 0)
-        {
-            std::cerr << "Client closed connection before sending INIT_REKEY\n";
-            tcp_socket.close();
-            return;
-        }
-
-        std::string init_msg(init_buf.begin(), init_buf.end());
-        if (init_msg == expected_init_msg)
-        {
-            aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-            std::cout << "Initial rekey done, keys established\n";
-        }
-        else
-        {
-            std::cerr << "Unexpected initial command: " << init_msg << "\n";
-            tcp_socket.close();
-            return;
-        }
+        // After sending READY, the server should immediately start the key exchange
+        // protocol, which begins by waiting for the client's salt.
+        // The previous logic incorrectly waited for an "INIT_REKEY" message
+        // that the client does not send, causing a deadlock.
+        aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+        std::cout << "Initial rekey done, keys established\n";
 
         if (aes_keys.size() < AES_GCM_KEY_LEN * 2)
         {
