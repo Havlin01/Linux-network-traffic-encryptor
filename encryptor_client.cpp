@@ -1304,7 +1304,7 @@ int main(int argc, char *argv[])
     std::thread rekey_thread([&client_rekey_flag, &app_shutdown_flag]()
                              {
         while (!app_shutdown_flag) { 
-            std::this_thread::sleep_for(std::chrono::seconds(3));
+            std::this_thread::sleep_for(std::chrono::seconds(6));
             client_rekey_flag.store(true);
         } });
 
