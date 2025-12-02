@@ -1352,6 +1352,10 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
         // Now perform the handshake on the dedicated socket (can be blocking)
 
         char udp_buf[1024];
+        // This initial UDP handshake should be blocking to ensure it completes.
+        udp_socket.non_blocking(false);
+        tcp_socket.non_blocking(false); // Ensure TCP is also blocking for initial phase
+
         size_t len = udp_socket.receive_from(boost::asio::buffer(udp_buf), client_udp_ep);
         std::cout << "Server received UDP: " << std::string(udp_buf, len) << "\n";
 
@@ -1359,6 +1363,7 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
         udp_socket.send_to(boost::asio::buffer(reply), client_udp_ep);
         std::cout << "Server replied to UDP\n";
 
+        // Now, set sockets to non-blocking for the main select() loop.
         tcp_socket.non_blocking(true);
         udp_socket.non_blocking(true);
 
