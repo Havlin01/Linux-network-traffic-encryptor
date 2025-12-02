@@ -1399,7 +1399,6 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         udp_socket.non_blocking(true);
 
         std::atomic<int> read_order(1), send_order(1);
-        int tundesc = tun_open();
         std::vector<unsigned char> key_decrypt(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
         std::vector<unsigned char> key_encrypt(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
 
