@@ -31,6 +31,7 @@
 #include <openssl/rand.h>
 #include <openssl/hmac.h>
 #include <openssl/objects.h>
+#include <list>
 #include <string_view> // Added for string_view
 
 using boost::asio::ip::tcp;
