@@ -1406,6 +1406,7 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
                 size_t cmd_len = tcp_socket.read_some(boost::asio::buffer(cmd_buf), ec);
                 if (!ec && cmd_len > 0) {
                     std::string cmd(cmd_buf, cmd_len);
+                    std::cout << cmd;
                     if (cmd == "REKEY_CLIENT_INITIATED") {
                         std::cout << "Client requested rekey\n";
                         // Temporarily set socket to blocking for synchronous rekey protocol
