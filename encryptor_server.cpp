@@ -1407,13 +1407,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
         while (true) {
-            // Since this thread is dedicated to one client, we can use blocking reads
-            // on the TCP socket and rely on Boost.Asio's error handling to detect
-            // a closed connection. The original select() logic here was incomplete
-            // and causing confusion.
 
-            // We need to check if the socket has data available without blocking forever.
-            // A non-blocking read_some is a good way to poll.
             char peek_buf[1];
             boost::system::error_code ec;
             tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
@@ -1432,6 +1426,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                 try
                 {
                     std::string cmd = receive_framed_message(tcp_socket);
+                    std::cout << "Received TCP command: " << cmd << "\n";
                     if (cmd == "REKEY_CLIENT_INITIATED")
                     {
                         std::cout << "Client requested rekey\n";
