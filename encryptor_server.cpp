@@ -1495,19 +1495,45 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                     }
                 }
             }
-        }
-        catch (const std::exception &e)
-        {
-            std::cerr << "Server exception: " << e.what() << "\n";
-        }
 
-        // Cleanup resources
-        // Note: We do not close tundesc here, as it's managed by main().
-        tcp_socket.close();
-        udp_socket.close();
+            // 2. Process TUN->UDP traffic (if select indicated activity)
+            if (FD_ISSET(tundesc, &fds))
+            {
+                if (E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order))
+                {
+                    last_udp_send_time = std::chrono::steady_clock::now();
+                }
+            }
+
+            // 3. Process UDP->TUN traffic (if select indicated activity)
+            if (FD_ISSET(udp_native, &fds))
+            {
+                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
+            }
+
+            // 4. Handle keep-alive for idle connections
+            if (ret == 0)
+            { // This means select() timed out, i.e., no activity
+                // No traffic, check if we need to send a keep-alive
+                auto now = std::chrono::steady_clock::now();
+                if (now - last_udp_send_time > keepalive_interval)
+                {
+                    udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_client), client_udp_ep);
+                    last_udp_send_time = now;
+                }
+            }
+        }
     }
-}
+    catch (const std::exception &e)
+    {
+        std::cerr << "Server exception: " << e.what() << "\n";
+    }
 
+    // Cleanup resources
+    // Note: We do not close tundesc here, as it's managed by main().
+    tcp_socket.close();
+    udp_socket.close();
+}
 int main(int argc, char *argv[])
 {
     std::string qkd_ip;
