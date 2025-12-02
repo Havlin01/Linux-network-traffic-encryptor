@@ -1407,121 +1407,61 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         auto last_udp_send_time = std::chrono::steady_clock::now();
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
-        while (true)
-        {
-            // Use select() to wait for activity on any socket or a timeout.
-            fd_set fds;
-            FD_ZERO(&fds);
-
-            int tcp_native = tcp_socket.native_handle();
-            FD_SET(tcp_native, &fds);
-
-            int udp_native = udp_socket.native_handle();
-            FD_SET(udp_native, &fds);
-
-            FD_SET(tundesc, &fds);
-
-            int max_fd = std::max({tundesc, tcp_native, udp_native});
-
-            struct timeval tv = {0, 100000}; // 100ms timeout
-            int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
-
-            if (ret < 0)
-            {
-                perror("select() error");
-                break;
-            }
-
-            boost::system::error_code ec;
+          while (true) {
+            // Check for TCP commands
             char cmd_buf[1024] = {0};
             size_t cmd_len = tcp_socket.read_some(boost::asio::buffer(cmd_buf), ec);
-            if (!ec && cmd_len > 0)
-            {
-                std::cout << "Client sent command: " << std::string(cmd_buf, cmd_len) << "\n";
+            if (!ec && cmd_len > 0) {
                 std::string cmd(cmd_buf, cmd_len);
-                if (cmd == "REKEY_CLIENT_INITIATED")
-                {
+                if (cmd == "REKEY_CLIENT_INITIATED") {
                     std::cout << "Client requested rekey\n";
                     aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
                     key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
                     key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
-                }
-                else if (cmd == "exit")
-                {
+                } else if (cmd == "exit") {
                     std::cout << "Client requested exit\n";
                     break;
                 }
-            }
-            else if (ec != boost::asio::error::would_block)
-            {
+            } else if (ec != boost::asio::error::would_block) {
                 std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
                 break;
             }
 
-            // 2. Process TUN->UDP traffic (if select indicated activity)
-            if (FD_ISSET(tundesc, &fds))
-            {
-                if (E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order))
-                {
+            // Process UDP and TUN traffic
+            if (E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order) ||
+                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order)) {
+                if (threads_available > 0) {
+                    threads_available -= 1;
+                    std::thread(thread_encrypt, &udp_socket, client_udp_ep, &key_encrypt, &key_decrypt,
+                                tundesc, &threads_available, &read_order, &send_order).detach();
+                }
+            }
+
+            // If no work was done, pause briefly to prevent busy-spinning
+            if (threads_available == threads_max) {
+                fd_set fds;
+                FD_ZERO(&fds);
+                FD_SET(tundesc, &fds);
+                int udp_native = udp_socket.native_handle();
+                FD_SET(udp_native, &fds);
+                struct timeval tv = {0, 1000}; // 1ms timeout
+                int max_fd = std::max(tundesc, udp_native);
+                select(max_fd + 1, &fds, NULL, NULL, &tv); // Wait for activity
+                if(last_udp_send_time - std::chrono::steady_clock::now() > keepalive_interval) {
+                    send_framed_message(tcp_socket, keepalive_msg_to_client);
                     last_udp_send_time = std::chrono::steady_clock::now();
                 }
-            }
-
-            // 3. Process UDP->TUN traffic (if select indicated activity)
-            if (FD_ISSET(udp_native, &fds))
-            {
-                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
-            }
-
-            // 4. Handle keep-alive for idle connections
-            if (ret == 0)
-            { // This means select() timed out, i.e., no activity
-                // No traffic, check if we need to send a keep-alive
-                auto now = std::chrono::steady_clock::now();
-                if (now - last_udp_send_time > keepalive_interval)
-                {
-                    udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_client), client_udp_ep);
-                    last_udp_send_time = now;
-                }
+            
             }
         }
 
-        // 2. Process TUN->UDP traffic (if select indicated activity)
-        if (FD_ISSET(tundesc, &fds))
-        {
-            if (E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order))
-            {
-                last_udp_send_time = std::chrono::steady_clock::now();
-            }
-        }
-
-        // 3. Process UDP->TUN traffic (if select indicated activity)
-        if (FD_ISSET(udp_native, &fds))
-        {
-            D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
-        }
-
-        // 4. Handle keep-alive for idle connections
-        if (ret == 0)
-        { // This means select() timed out, i.e., no activity
-            // No traffic, check if we need to send a keep-alive
-            auto now = std::chrono::steady_clock::now();
-            if (now - last_udp_send_time > keepalive_interval)
-            {
-                udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_client), client_udp_ep);
-                last_udp_send_time = now;
-            }
-        }
+        close(tundesc);
+        tcp_socket.close();
+        udp_socket.close();
     }
-    catch (const std::exception &e)
-    {
+    catch (const std::exception &e) {
         std::cerr << "Server exception: " << e.what() << "\n";
     }
-
-    // Cleanup resources
-    // Note: We do not close tundesc here, as it's managed by main().
-    tcp_socket.close();
-    udp_socket.close();
 }
 int main(int argc, char *argv[])
 {
