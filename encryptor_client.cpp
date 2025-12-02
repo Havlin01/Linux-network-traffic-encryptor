@@ -1318,37 +1318,36 @@ int main(int argc, char* argv[]) {
             std::atomic<int> read_order = 0, send_order = 1;
 
             while (!shutdown_flag) {
-                boost::system::error_code ec;
-                char tcp_buf[1024] = {0};
-                size_t len = tcp_socket.read_some(boost::asio::buffer(tcp_buf), ec);
-                if (!ec && len > 0) {
-                    if (std::string(tcp_buf, len) == "REKEY_SERVER_INITIATED") {
-                        // Temporarily set socket to blocking for synchronous rekey protocol
-                        tcp_socket.non_blocking(false, ec);
-                        std::string qkd_key_buffer;
-                        if (!qkd_ip.empty()) {
-                            qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
-                        }
-                        sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
+                // Use select() to wait for activity on any socket or a timeout.
+                // This is the core of the event loop.
+                fd_set fds;
+                FD_ZERO(&fds);
 
-                        // Restore non-blocking mode for the main loop
-                        tcp_socket.non_blocking(true, ec);
+                int tcp_native = tcp_socket.native_handle();
+                FD_SET(tcp_native, &fds);
 
-                        if (sec_key.empty()) {
-                            std::cerr << "Server-initiated rekey failed, closing connection.\n";
-                            shutdown_flag.store(true);
-                            continue;
-                        }
-                        key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
-                        key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
-                        std::cout << "Server-initiated rekey completed\n";
-                    }
-                } else if (ec != boost::asio::error::would_block) {
-                    std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
-                    shutdown_flag.store(true); // Signal shutdown
+                int udp_native = udp_socket.native_handle();
+                FD_SET(udp_native, &fds);
+
+                FD_SET(tundesc, &fds);
+
+                int max_fd = std::max({tundesc, tcp_native, udp_native});
+
+                // A short timeout ensures the loop iterates regularly to check flags.
+                struct timeval tv = {0, 100000}; // 100ms timeout
+                int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
+
+                if (ret < 0) {
+                    perror("select() error");
+                    break; // Exit on select error
                 }
 
+                boost::system::error_code ec;
+                char tcp_buf[1024] = {0};
+
+                // 1. Check for client-initiated rekey flag (checked every loop iteration)
                 if (client_rekey_flag.load()) {
+                    std::cout << "Periodic rekey triggered by client timer.\n";
                     // Temporarily set socket to blocking for synchronous rekey protocol
                     tcp_socket.non_blocking(false, ec);
                     boost::asio::write(tcp_socket, boost::asio::buffer("REKEY_CLIENT_INITIATED"));
@@ -1373,29 +1372,55 @@ int main(int argc, char* argv[]) {
                     std::cout << "Client-initiated rekey completed\n";
                 }
 
-                bool traffic_sent = E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc, read_order, send_order);
-                if (traffic_sent) {
-                    last_udp_send_time = std::chrono::steady_clock::now();
+                // 2. Check for TCP commands from server (only if select indicated activity)
+                if (FD_ISSET(tcp_native, &fds)) {
+                    size_t len = tcp_socket.read_some(boost::asio::buffer(tcp_buf), ec);
+                    if (!ec && len > 0) {
+                        if (std::string(tcp_buf, len) == "REKEY_SERVER_INITIATED") {
+                            // Temporarily set socket to blocking for synchronous rekey protocol
+                            tcp_socket.non_blocking(false, ec);
+                            std::string qkd_key_buffer;
+                            if (!qkd_ip.empty()) {
+                                qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
+                            }
+                            sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
+
+                            // Restore non-blocking mode for the main loop
+                            tcp_socket.non_blocking(true, ec);
+
+                            if (sec_key.empty()) {
+                                std::cerr << "Server-initiated rekey failed, closing connection.\n";
+                                shutdown_flag.store(true);
+                                continue;
+                            }
+                            key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
+                            key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
+                            std::cout << "Server-initiated rekey completed\n";
+                        }
+                    } else if (ec != boost::asio::error::would_block) {
+                        std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
+                        shutdown_flag.store(true); // Signal shutdown
+                    }
                 }
 
-                bool traffic_received = D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc, read_order, send_order);
+                // 3. Process TUN->UDP traffic (if select indicated activity)
+                if (FD_ISSET(tundesc, &fds)) {
+                    if (E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc, read_order, send_order)) {
+                        last_udp_send_time = std::chrono::steady_clock::now();
+                    }
+                }
 
-                // If there was no traffic, check for keep-alive or wait for I/O
-                if (!traffic_sent && !traffic_received) {
+                // 4. Process UDP->TUN traffic (if select indicated activity)
+                if (FD_ISSET(udp_native, &fds)) {
+                    D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc, read_order, send_order);
+                }
+
+                // 5. Handle keep-alive for idle connections
+                if (ret == 0) { // This means select() timed out, i.e., no activity
                     auto now = std::chrono::steady_clock::now();
                     if (now - last_udp_send_time > keepalive_interval) {
                         udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_server), server_udp_ep);
                         last_udp_send_time = now;
-                    } else {
-                        // Wait for activity on TUN or UDP socket to avoid busy-looping
-                        fd_set fds;
-                        FD_ZERO(&fds);
-                        FD_SET(tundesc, &fds);
-                        int udp_native = udp_socket.native_handle();
-                        FD_SET(udp_native, &fds);
-                        struct timeval tv = {0, 100000}; // 100ms timeout
-                        int max_fd = std::max(tundesc, udp_native);
-                        select(max_fd + 1, &fds, NULL, NULL, &tv);
                     }
                 }
             }
