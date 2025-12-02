@@ -1568,14 +1568,10 @@ int main(int argc, char *argv[])
                 {
                     handle_client(io_context, std::move(s), tundesc, chosen_pqc_alg, qkd_ip);
                 });
-            // Detach the thread. This is a simple model for a server that handles many
-            // short-lived connections. The thread is responsible for its own resource cleanup.
-            // The handle_client function is now robust enough to terminate correctly.
-            client_threads.back().detach();
         }
 
-        // On graceful shutdown, join all remaining threads.
-        for (auto& t : client_threads) {
+        // On graceful shutdown (e.g. Ctrl-C), join all remaining threads.
+        for (auto &t : client_threads) {
             if (t.joinable()) {
                 t.join();
             }
