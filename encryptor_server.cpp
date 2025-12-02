@@ -1385,8 +1385,8 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
 
         char udp_buf[1024];
         // This initial UDP handshake should be blocking to ensure it completes.
+        // However, the TCP socket should be non-blocking for the main loop later.
         udp_socket.non_blocking(false);
-        tcp_socket.non_blocking(false); // Ensure TCP is also blocking for initial phase
 
         size_t len = udp_socket.receive_from(boost::asio::buffer(udp_buf), client_udp_ep);
         std::cout << "Server received UDP: " << std::string(udp_buf, len) << "\n";
