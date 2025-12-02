@@ -1487,12 +1487,17 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         close(tundesc);
         tcp_socket.close();
         udp_socket.close();
-    }
+    }.detach();
+
+
+
     catch (const std::exception &e)
     {
         std::cerr << "Server exception: " << e.what() << "\n";
     }
 }
+
+
 int main(int argc, char *argv[])
 {
     std::string qkd_ip;
