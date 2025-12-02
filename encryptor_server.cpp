@@ -1435,47 +1435,31 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
             boost::system::error_code ec;
             if (FD_ISSET(tcp_native, &fds))
             {
-                std::cout << "TCP activity detected\n";
-                char cmd_buf[1024];
+                char cmd_buf[1024] = {0};
                 size_t cmd_len = tcp_socket.read_some(boost::asio::buffer(cmd_buf), ec);
-                // Temporarily block to read a framed command atomically
-                tcp_socket.non_blocking(false, ec);
-                if (ec)
-                {
-                    std::cerr << "non_blocking(false) failed: " << ec.message() << "\n";
-                }
-                std::string cmd;
+
                 if (!ec && cmd_len > 0)
                 {   
                     std::string cmd(cmd_buf, cmd_len);
                     if (cmd == "REKEY_CLIENT_INITIATED")
                     {
                         std::cout << "Client requested rekey\n";
+                        // Temporarily set socket to blocking for synchronous rekey protocol
+                        tcp_socket.non_blocking(false, ec);
                         aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+                        // Restore non-blocking mode for the main loop
+                        tcp_socket.non_blocking(true, ec);
+
                         if (!aes_keys.empty())
                         {
                             key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
                             key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
                         }
                     }
-                    else if (cmd == "exit")
-                    {
-                        std::cout << "Client requested exit\n";
-                        break;
-                    }
-                    else
-                    {
-                        std::cout << "TCP command: [" << cmd << "]\n";
-                    }
+                } else if (ec != boost::asio::error::would_block) {
+                    std::cerr << "TCP error: " << ec.message() << "\n";
+                    break;
                 }
-                else
-                {
-                    if (ec)
-                        std::cerr << "Framed read error: " << ec.message() << "\n";
-                    else
-                        std::cerr << "Framed read returned false\n";
-                }
-                tcp_socket.non_blocking(true, ec);
             }
 
             // 2. Process TUN->UDP traffic (if select indicated activity)
@@ -1594,8 +1578,6 @@ int main(int argc, char *argv[])
         {
             tcp::socket socket(io_context);
             acceptor.accept(socket);
-
-            reap_threads(client_threads);
 
             // Move the socket into the thread context to ensure proper ownership.
             client_threads.emplace_back(
