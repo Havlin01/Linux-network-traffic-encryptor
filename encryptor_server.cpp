@@ -1306,10 +1306,11 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
         std::cout << "READY sent to client\n";
 
         // Robustly handle the initial "INIT_REKEY" message
-        char init_buf[64] = {0};
+        const std::string expected_init_msg = "INIT_REKEY";
+        std::vector<char> init_buf(expected_init_msg.length());
         boost::system::error_code ec;
-        size_t init_len = tcp_socket.read_some(boost::asio::buffer(init_buf), ec);
-
+        // Use boost::asio::read to ensure we read exactly the expected number of bytes.
+        size_t init_len = boost::asio::read(tcp_socket, boost::asio::buffer(init_buf), ec);
         if (ec) {
             std::cerr << "Error during initial INIT_REKEY read: " << ec.message() << "\n";
             tcp_socket.close();
@@ -1321,8 +1322,8 @@ void handle_client(boost::asio::io_context& io_context, tcp::socket tcp_socket, 
             return;
         }
 
-        std::string init_msg(init_buf, init_len);
-        if (init_msg == "INIT_REKEY") {
+        std::string init_msg(init_buf.begin(), init_buf.end());
+        if (init_msg == expected_init_msg) {
             aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
             std::cout << "Initial rekey done, keys established\n";
         } else {
