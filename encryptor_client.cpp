@@ -1326,9 +1326,6 @@ int main(int argc, char *argv[])
             boost::asio::read(tcp_socket, boost::asio::buffer(ready_buf, 5));
             std::cout << "Server READY received\n";
 
-            const std::string init_rekey_msg = "INIT_REKEY";
-            boost::asio::write(tcp_socket, boost::asio::buffer(init_rekey_msg));
-
             std::vector<uint8_t> sec_key;
             sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, "", chosen_pqc_alg);
 
