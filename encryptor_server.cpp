@@ -1437,6 +1437,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
             size_t cmd_len = tcp_socket.read_some(boost::asio::buffer(cmd_buf), ec);
             if (!ec && cmd_len > 0)
             {
+                std::cout << "Client sent command: " << std::string(cmd_buf, cmd_len) << "\n";
                 std::string cmd(cmd_buf, cmd_len);
                 if (cmd == "REKEY_CLIENT_INITIATED")
                 {
