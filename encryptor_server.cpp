@@ -28,6 +28,7 @@
 #include <openssl/provider.h>
 #include <vector>
 #include <map> // Added for PQC algorithm properties
+#include <list>
 #include <openssl/rand.h>
 #include <openssl/hmac.h>
 #include <openssl/objects.h>
