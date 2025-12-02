@@ -1458,7 +1458,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                     if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset) {
                         std::cerr << "TCP connection closed by peer.\n";
                     } else if (e.code() != boost::asio::error::would_block) {
-                        std::cerr << "TCP error: " << e.message() << "\n";
+                        std::cerr << "TCP error: " << e.what() << "\n";
                     }
                     break;
                 }
