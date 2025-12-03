@@ -1479,6 +1479,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                 if (!data.empty())
                 {
                     // The old E_N_C_R logic is now here.
+                    std::cout << "encryption";
                     string encrypted_data = encrypt_data(key_encrypt, data);
                     send_encrypted(udp_socket, client_udp_ep, encrypted_data);
                 }
@@ -1494,6 +1495,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                     // The old D_E_C_R logic is now here.
                     try
                     {
+                        std::cout << "decryption";
                         string data = decrypt_data(key_decrypt, encrypted_data);
                         if (!data.empty())
                         {
