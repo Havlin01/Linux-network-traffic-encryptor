@@ -1406,14 +1406,12 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         auto last_udp_send_time = std::chrono::steady_clock::now();
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
-        char bufferTCP[MAXLINE] = {0};
-
         while (true)
         {
 
             char peek_buf[1];
             boost::system::error_code ec;
-            auto status = tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
+            tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
 
             if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset)
             {
