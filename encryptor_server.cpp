@@ -1351,7 +1351,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         std::string init_msg(init_buf.begin(), init_buf.end());
         if (init_msg == expected_init_msg)
         {
-            aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+            aes_keys = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg); // Now passing by reference
             std::cout << "Initial rekey done, keys established\n";
         }
         else
