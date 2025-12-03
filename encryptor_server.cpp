@@ -1445,7 +1445,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                 if (!ec && status > 0)
                 {
                     std::string msg(bufferTCP, status);
-                    if (msg == "REKEY_CLIENT_INITIATED")
+                    if (msg.starts_with("REKEY_CLIENT_INITIATED"))
                     {
                         std::cout << "Client initiated rekey" << std::endl;
                         tcp_socket.non_blocking(false, ec); // Temporarily block for rekey
