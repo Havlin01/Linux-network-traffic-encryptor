@@ -1425,14 +1425,10 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
 
 
             char bufferTCP[4096];
-
-            boost::system::error_code ec;
             size_t status = tcp_socket.read_some(boost::asio::buffer(bufferTCP), ec);
 
-            std::cout << ec;
-            std::cout << status;
-
-
+            std::cout << "Read status: " << status << ", ec: " << ec.message() << std::endl;
+            
             if (!ec && status > 0)
             {
                 std::string msg(bufferTCP, bufferTCP + status);
