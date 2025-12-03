@@ -1484,6 +1484,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
             // A short sleep to prevent this busy-loop from consuming 100% CPU
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
+        close(tundesc);
         tcp_socket.close();
         udp_socket.close();
     }
@@ -1494,11 +1495,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
     {
         std::cerr << "Server exception: " << e.what() << "\n";
     }
-    // Ensure sockets are closed if an exception occurs before the main loop
-    if (tcp_socket.is_open()) tcp_socket.close();
-    if (udp_socket.is_open()) udp_socket.close();
-    // Note: tundesc is shared and should not be closed by this thread.
-    std::cout << "Client thread finished and cleaned up." << std::endl;
+   
 }
 
 
@@ -1570,10 +1567,7 @@ int main(int argc, char *argv[])
                 {
                     handle_client(io_context, std::move(s), tundesc, chosen_pqc_alg, qkd_ip);
                 });
-            // Detach the thread. This allows the thread to run independently.
-            // When handle_client finishes (e.g., on client disconnect), the thread
-            // will automatically clean up its resources and terminate.
-            client_threads.back().detach();
+
         }
     }
     catch (const std::exception &e)
