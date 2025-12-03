@@ -1408,79 +1408,83 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
 
         while (true)
         {
+            std::cout << "in the loop\n";
 
-            char peek_buf[1];
-            tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
+            fd_set fds;
+            FD_ZERO(&fds);
 
-            if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset)
+            int tcp_native = tcp_socket.native_handle();
+            FD_SET(tcp_native, &fds);
+
+            int udp_native = udp_socket.native_handle();
+            FD_SET(udp_native, &fds);
+
+            FD_SET(tundesc, &fds);
+
+            int max_fd = std::max({tundesc, tcp_native, udp_native});
+
+            // Set a timeout for select(). This allows the loop to periodically
+            // perform tasks like sending keep-alives even if there's no socket activity.
+            struct timeval tv = {1, 0}; // 1-second timeout
+            int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
+
+            if (ret < 0)
             {
-                std::cerr << "TCP connection closed by peer.\n";
+                perror("select() error");
                 break;
             }
-            else if (ec != boost::asio::error::would_block && ec)
+
+            std::cout << "select() returned " << ret << "\n";
+
+            // 1. Check for TCP commands from the client (e.g., rekey)
+            if (FD_ISSET(tcp_native, &fds))
             {
-                std::cerr << "TCP error on poll: " << ec.message() << "\n";
-                break;
-            }
+                char bufferTCP[4096] = {0};
+                size_t status = tcp_socket.read_some(boost::asio::buffer(bufferTCP), ec);
 
-
-            char bufferTCP[4096];
-            size_t status = tcp_socket.read_some(boost::asio::buffer(bufferTCP), ec);
-
-            std::cout << "Read status: " << status << ", ec: " << ec.message() << std::endl;
-            
-            if (!ec && status > 0)
-            {
-                std::string msg(bufferTCP, bufferTCP + status);
-
- 
-                while (!msg.empty() && (msg.back() == '\n' || msg.back() == '\r'))
-                    msg.pop_back();
-
-                if (msg == "REKEY_CLIENT_INITIATED")
+                if (!ec && status > 0)
                 {
-                    std::cout << "Client initiated rekey" << std::endl;
-
-                    // Set the socket to blocking mode for the synchronous rekey protocol.
-                    tcp_socket.non_blocking(false, ec);
-
-                    std::vector<unsigned char> new_key_material =
-                        rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-
-                    if (new_key_material.size() >= AES_GCM_KEY_LEN * 2)
+                    std::string msg(bufferTCP, status);
+                    if (msg == "REKEY_CLIENT_INITIATED")
                     {
-                        aes_keys = new_key_material;
+                        std::cout << "Client initiated rekey" << std::endl;
+                        tcp_socket.non_blocking(false, ec); // Temporarily block for rekey
+                        std::vector<unsigned char> new_key_material = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+                        tcp_socket.non_blocking(true, ec);  // Restore non-blocking
 
-                        key_decrypt.assign(
-                            aes_keys.begin(),
-                            aes_keys.begin() + AES_GCM_KEY_LEN);
-
-                        key_encrypt.assign(
-                            aes_keys.begin() + AES_GCM_KEY_LEN,
-                            aes_keys.begin() + (AES_GCM_KEY_LEN * 2));
-
-                        std::cout << "Rekey completed & keys updated" << std::endl;
+                        if (new_key_material.size() >= AES_GCM_KEY_LEN * 2)
+                        {
+                            aes_keys = new_key_material;
+                            key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
+                            key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
+                            std::cout << "Rekey completed & keys updated" << std::endl;
+                        }
+                        else
+                        {
+                            std::cerr << "Rekey failed, closing connection.\n";
+                            break; // Exit loop on rekey failure
+                        }
                     }
-                    else
-                    {
-                        std::cerr << "Rekey returned insufficient key length" << std::endl;
-                    }
-
-                    // IMPORTANT: Restore the socket to non-blocking mode for the main loop.
-                    tcp_socket.non_blocking(true, ec);
-
-                    continue;
+                }
+                else if (ec != boost::asio::error::would_block)
+                {
+                    std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
+                    break; // Exit loop on error or disconnect
                 }
             }
 
-            // Process TUN and UDP traffic (these are non-blocking calls)
-            E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order);
-            D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
+            // 2. Process TUN->UDP traffic (if select indicated activity)
+            if (FD_ISSET(tundesc, &fds))
+            {
+                E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order);
+            }
 
-            // A short sleep to prevent this busy-loop from consuming 100% CPU
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            // 3. Process UDP->TUN traffic (if select indicated activity)
+            if (FD_ISSET(udp_native, &fds))
+            {
+                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
+            }
         }
-        close(tundesc);
         tcp_socket.close();
         udp_socket.close();
     }
