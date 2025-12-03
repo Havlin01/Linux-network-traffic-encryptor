@@ -1474,39 +1474,13 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
             // 2. Process TUN->UDP traffic (if select indicated activity)
             if (FD_ISSET(tundesc, &fds))
             {
-                // E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order);
-                string data = read_tun(tundesc);
-                if (!data.empty())
-                {
-                    // The old E_N_C_R logic is now here.
-                    std::cout << "encryption";
-                    string encrypted_data = encrypt_data(key_encrypt, data);
-                    send_encrypted(udp_socket, client_udp_ep, encrypted_data);
-                }
+                E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc, read_order, send_order);
             }
 
             // 3. Process UDP->TUN traffic (if select indicated activity)
             if (FD_ISSET(udp_native, &fds))
             {
-                // D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
-                string encrypted_data = data_recieve(udp_socket, client_udp_ep);
-                if (!encrypted_data.empty() && !is_keepalive_from_client(encrypted_data))
-                {
-                    // The old D_E_C_R logic is now here.
-                    try
-                    {
-                        std::cout << "decryption";
-                        string data = decrypt_data(key_decrypt, encrypted_data);
-                        if (!data.empty())
-                        {
-                            write_tun(tundesc, data);
-                        }
-                    }
-                    catch (...)
-                    {
-                        // Decryption failed, ignore packet.
-                    }
-                }
+                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc, read_order, send_order);
             }
         }
         tcp_socket.close();
