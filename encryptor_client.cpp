@@ -1383,7 +1383,7 @@ int main(int argc, char *argv[])
                 int max_fd = std::max({tundesc, tcp_native, udp_native});
 
                 // A short timeout ensures the loop iterates regularly to check flags.
-                struct timeval tv = {0, 1000000}; // 100ms timeout
+                struct timeval tv = {0, 100000}; // 100ms timeout
                 int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
 
                 if (ret < 0)
