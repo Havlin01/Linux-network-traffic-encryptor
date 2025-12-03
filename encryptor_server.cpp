@@ -1408,7 +1408,6 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
 
         while (true)
         {
-            std::cout << "in the loop\n";
 
             fd_set fds;
             FD_ZERO(&fds);
@@ -1434,7 +1433,6 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                 break;
             }
 
-            std::cout << "select() returned " << ret << "\n";
 
             // 1. Check for TCP commands from the client (e.g., rekey)
             if (FD_ISSET(tcp_native, &fds))
