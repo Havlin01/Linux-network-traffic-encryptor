@@ -1410,7 +1410,6 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         {
 
             char peek_buf[1];
-            boost::system::error_code ec;
             tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
 
             if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset)
