@@ -1107,14 +1107,10 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
 {
     std::vector<unsigned char> sec_key(AES_GCM_KEY_LEN * 2);
 
-    // Client should initiate the salt exchange after requesting a rekey.
-    std::vector<uint8_t> salt_bytes(64);
-    if (RAND_bytes(salt_bytes.data(), salt_bytes.size()) != 1) {
-        std::cerr << "Error: Failed to generate salt for HMAC.\n";
-        return {};
-    }
-    send_framed_message(client_socket, std::string(salt_bytes.begin(), salt_bytes.end()));
-    std::cout << "Client: sent salt (len=" << salt_bytes.size() << ")\n";
+    std::string salt_str = receive_framed_message(client_socket);
+    std::vector<uint8_t> salt_bytes(salt_str.begin(), salt_str.end());
+    std::cout << "Client: received salt (len=" << salt_bytes.size() << ")\n";
+    std::cout << "DEBUG: salt(hex) = " << to_hex(salt_bytes) << std::endl;
 
     PQCKeyMaterial pqc_material = get_pqckey(client_socket, chosen_pqc_alg);
     if (pqc_material.shared_secret.empty())
@@ -1406,7 +1402,8 @@ int main(int argc, char *argv[])
                     tcp_socket.non_blocking(false, ec);
 
                     // --- send rekey request EXACTLY like initial exchange ---
-                    send_framed_message(tcp_socket, "REKEY_CLIENT_INITIATED");
+                    boost::asio::write(tcp_socket, boost::asio::buffer("REKEY_CLIENT_INITIATED"));
+                    std::cout << "Client-initiated rekey sent\n";
 
                     client_rekey_flag.store(false);
 

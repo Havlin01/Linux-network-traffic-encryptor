@@ -1406,12 +1406,14 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         auto last_udp_send_time = std::chrono::steady_clock::now();
         const std::string keepalive_msg_to_client = "KEEPALIVE_S";
 
+        char bufferTCP[MAXLINE] = {0};
+
         while (true)
         {
 
             char peek_buf[1];
             boost::system::error_code ec;
-            tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
+            auto status = tcp_socket.read_some(boost::asio::buffer(peek_buf, 0), ec); // A zero-byte read to check status
 
             if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset)
             {
@@ -1427,6 +1429,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
 
             char bufferTCP[4096];
 
+            boost::system::error_code ec;
             size_t status = tcp_socket.read_some(boost::asio::buffer(bufferTCP), ec);
 
             if (!ec && status > 0)
@@ -1488,17 +1491,11 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         tcp_socket.close();
         udp_socket.close();
     }
-
-
-
     catch (const std::exception &e)
     {
         std::cerr << "Server exception: " << e.what() << "\n";
     }
-   
 }
-
-
 int main(int argc, char *argv[])
 {
     std::string qkd_ip;
@@ -1567,7 +1564,6 @@ int main(int argc, char *argv[])
                 {
                     handle_client(io_context, std::move(s), tundesc, chosen_pqc_alg, qkd_ip);
                 });
-
         }
     }
     catch (const std::exception &e)
