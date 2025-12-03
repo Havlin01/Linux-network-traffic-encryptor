@@ -1429,6 +1429,10 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
             boost::system::error_code ec;
             size_t status = tcp_socket.read_some(boost::asio::buffer(bufferTCP), ec);
 
+            std::cout << ec;
+            std::cout << status;
+
+
             if (!ec && status > 0)
             {
                 std::string msg(bufferTCP, bufferTCP + status);
@@ -1441,16 +1445,12 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                 {
                     std::cout << "Client initiated rekey" << std::endl;
 
-                    // ---- LEGACY PRESERVED: make socket blocking ----
-                    int flags = fcntl(tcp_socket.native_handle(), F_GETFL, 0);
-                    fcntl(tcp_socket.native_handle(), F_SETFL, flags & ~O_NONBLOCK);
+                    // Set the socket to blocking mode for the synchronous rekey protocol.
+                    tcp_socket.non_blocking(false, ec);
 
-                    // ---- LEGACY PRESERVED: synchronous rekey call ----
                     std::vector<unsigned char> new_key_material =
                         rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
 
-                    // ---- apply new keys (NEW SERVER API) ----
-                    // Expecting two AES keys back-to-back (encrypt/decrypt)
                     if (new_key_material.size() >= AES_GCM_KEY_LEN * 2)
                     {
                         aes_keys = new_key_material;
@@ -1470,8 +1470,8 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                         std::cerr << "Rekey returned insufficient key length" << std::endl;
                     }
 
-
-                    fcntl(tcp_socket.native_handle(), F_SETFL, flags | O_NONBLOCK);
+                    // IMPORTANT: Restore the socket to non-blocking mode for the main loop.
+                    tcp_socket.non_blocking(true, ec);
 
                     continue;
                 }
