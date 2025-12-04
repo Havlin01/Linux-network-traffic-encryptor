@@ -1314,7 +1314,8 @@ int main(int argc, char *argv[])
 
             tcp_socket.non_blocking(true);
 
-            while (!shutdown_flag)
+            bool connection_shutdown_flag = false;
+            while (!connection_shutdown_flag)
             {
                 // Use select() to wait for activity on any socket or a timeout.
                 // This is the core of the event loop.
@@ -1377,7 +1378,7 @@ int main(int argc, char *argv[])
                     if (sec_key.empty())
                     {
                         std::cerr << "Client-initiated rekey failed, closing connection.\n";
-                        shutdown_flag.store(true);
+                        connection_shutdown_flag = true;
                     }
                     else
                     {
@@ -1410,7 +1411,7 @@ int main(int argc, char *argv[])
                             if (sec_key.empty())
                             {
                                 std::cerr << "Server-initiated rekey failed, closing connection.\n";
-                                shutdown_flag.store(true);
+                                connection_shutdown_flag = true;
                                 continue;
                             }
                             key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
@@ -1421,7 +1422,7 @@ int main(int argc, char *argv[])
                     else if (ec != boost::asio::error::would_block)
                     {
                         std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
-                        shutdown_flag.store(true); // Signal shutdown
+                        connection_shutdown_flag = true; // Signal shutdown
                     }
                 }
 
