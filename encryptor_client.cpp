@@ -11,6 +11,7 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <linux/if.h> // Now included after Boost.Asio
+#include <sys/resource.h>
 #include <linux/if_tun.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -318,66 +319,68 @@ void send_encrypted(udp::socket &socket, udp::endpoint &remote_endpoint, const s
     socket.send_to(boost::asio::buffer(cipher), remote_endpoint);
 }
 
-string encrypt_data(const std::vector<unsigned char> &key, const string &plaintext)
+size_t encrypt_data(const std::vector<unsigned char> &key, const std::span<const char> plaintext, std::span<char> output_buffer)
 {
     EVP_CIPHER_CTX *ctx;
     int len;
     int ciphertext_len;
-    std::vector<unsigned char> iv(AES_GCM_IV_LEN);
-    std::vector<unsigned char> ciphertext(plaintext.length());
-    std::vector<unsigned char> tag(TAG_SIZE);
 
-    if (1 != RAND_bytes(iv.data(), iv.size()))
-    {
-        std::cerr << "Error: Failed to generate IV." << std::endl;
-        return "";
+    if (output_buffer.size() < plaintext.size() + AES_GCM_IV_LEN + TAG_SIZE) {
+        std::cerr << "Error: Output buffer too small for encryption." << std::endl;
+        return 0;
     }
 
-    if (!(ctx = EVP_CIPHER_CTX_new()))
-        return "";
-    if (1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL))
-        return "";
-    if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, iv.size(), NULL))
-        return "";
-    if (1 != EVP_EncryptInit_ex(ctx, NULL, NULL, key.data(), iv.data()))
-        return "";
+    // IV is written directly to the start of the output buffer
+    unsigned char* iv = reinterpret_cast<unsigned char*>(output_buffer.data());
+    if (1 != RAND_bytes(iv, AES_GCM_IV_LEN))
+    {
+        std::cerr << "Error: Failed to generate IV." << std::endl;
+        return 0;
+    }
 
-    if (1 != EVP_EncryptUpdate(ctx, ciphertext.data(), &len, (const unsigned char *)plaintext.c_str(), plaintext.length()))
+    // Ciphertext is written after the IV
+    unsigned char* ciphertext = iv + AES_GCM_IV_LEN;
+    // Tag will be written after the ciphertext
+    unsigned char* tag = ciphertext + plaintext.size();
+
+    if (!(ctx = EVP_CIPHER_CTX_new()))
+        return 0;
+    if (1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL))
+        return 0;
+    if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, AES_GCM_IV_LEN, NULL))
+        return 0;
+    if (1 != EVP_EncryptInit_ex(ctx, NULL, NULL, key.data(), iv))
+        return 0;
+
+    if (1 != EVP_EncryptUpdate(ctx, ciphertext, &len, (const unsigned char *)plaintext.data(), plaintext.size()))
     {
         EVP_CIPHER_CTX_free(ctx);
-        return "";
+        return 0;
     }
     ciphertext_len = len;
 
-    if (1 != EVP_EncryptFinal_ex(ctx, ciphertext.data() + len, &len))
+    if (1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len))
     {
         EVP_CIPHER_CTX_free(ctx);
-        return "";
+        return 0;
     }
     ciphertext_len += len;
-    ciphertext.resize(ciphertext_len);
 
-    if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, TAG_SIZE, tag.data()))
+    if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, TAG_SIZE, tag))
     {
         EVP_CIPHER_CTX_free(ctx);
-        return "";
+        return 0;
     }
 
     EVP_CIPHER_CTX_free(ctx);
-
-    // Prepend IV and append tag to ciphertext
-    string result(reinterpret_cast<const char *>(iv.data()), iv.size());
-    result.append(reinterpret_cast<const char *>(ciphertext.data()), ciphertext.size());
-    result.append(reinterpret_cast<const char *>(tag.data()), tag.size());
-
-    return result;
+    return ciphertext_len + AES_GCM_IV_LEN + TAG_SIZE;
 }
 
-string decrypt_data(const std::vector<unsigned char> &key, const string &cipher_with_iv_tag)
+size_t decrypt_data(const std::vector<unsigned char> &key, const std::span<const char> cipher_with_iv_tag, std::span<char> plaintext_buffer)
 {
-    if (cipher_with_iv_tag.length() < AES_GCM_IV_LEN + TAG_SIZE)
+    if (cipher_with_iv_tag.size() < AES_GCM_IV_LEN + TAG_SIZE)
     {
-        return ""; // Not enough data
+        return 0; // Not enough data
     }
 
     EVP_CIPHER_CTX *ctx;
@@ -386,37 +389,41 @@ string decrypt_data(const std::vector<unsigned char> &key, const string &cipher_
 
     const unsigned char *iv = (const unsigned char *)cipher_with_iv_tag.data();
     const unsigned char *ciphertext = iv + AES_GCM_IV_LEN;
-    size_t ciphertext_len_val = cipher_with_iv_tag.length() - AES_GCM_IV_LEN - TAG_SIZE;
+    size_t ciphertext_len_val = cipher_with_iv_tag.size() - AES_GCM_IV_LEN - TAG_SIZE;
     const unsigned char *tag = ciphertext + ciphertext_len_val;
-    std::vector<unsigned char> plaintext(ciphertext_len_val);
+
+    if (plaintext_buffer.size() < ciphertext_len_val) {
+        std::cerr << "Error: Plaintext buffer too small for decryption." << std::endl;
+        return 0;
+    }
+    unsigned char* plaintext = reinterpret_cast<unsigned char*>(plaintext_buffer.data());
 
     if (!(ctx = EVP_CIPHER_CTX_new()))
-        return "";
+        return 0;
     if (!EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL))
-        return "";
+        return 0;
     if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, AES_GCM_IV_LEN, NULL))
-        return "";
+        return 0;
     if (!EVP_DecryptInit_ex(ctx, NULL, NULL, key.data(), iv))
-        return "";
-    if (!EVP_DecryptUpdate(ctx, plaintext.data(), &len, ciphertext, ciphertext_len_val))
-        return "";
+        return 0;
+    if (!EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len_val))
+        return 0;
     plaintext_len = len;
 
     if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, TAG_SIZE, (void *)tag))
-        return "";
+        return 0;
 
-    int ret = EVP_DecryptFinal_ex(ctx, plaintext.data() + len, &len);
+    int ret = EVP_DecryptFinal_ex(ctx, plaintext + len, &len);
     EVP_CIPHER_CTX_free(ctx);
 
     if (ret > 0)
     {
         plaintext_len += len;
-        plaintext.resize(plaintext_len);
-        return string(reinterpret_cast<const char *>(plaintext.data()), plaintext.size());
+        return plaintext_len;
     }
     else
     {
-        return ""; // Authentication failed
+        return 0; // Authentication failed
     }
 }
 
@@ -426,26 +433,30 @@ string decrypt_data(const std::vector<unsigned char> &key, const string &cipher_
 */
 bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc)
 {
-    string data;
-    string encrypted_data = data_recieve(socket, remote_endpoint);
-    if (is_keepalive_from_server(encrypted_data))
+    // Use a static buffer to avoid reallocation on every call
+    static char encrypted_buffer[MAXLINE];
+    static char decrypted_buffer[MAXLINE];
+
+    boost::system::error_code error;
+    size_t encrypted_len = socket.receive_from(boost::asio::buffer(encrypted_buffer), remote_endpoint, 0, error);
+
+    if (error || encrypted_len == 0) {
+        return false;
+    }
+
+    if (encrypted_len == keepalive_msg_from_server.length() && memcmp(encrypted_buffer, keepalive_msg_from_server.c_str(), encrypted_len) == 0)
     {
         // It's just a keep-alive from the server, ignore it and report no real data.
         return false;
     }
 
-    if (encrypted_data.length() < AES_GCM_IV_LEN + TAG_SIZE + 1)
-    {
-        return false;
-    }
-
-    data = decrypt_data(key, encrypted_data);
-    if (data.empty()) {
+    size_t decrypted_len = decrypt_data(key, {encrypted_buffer, encrypted_len}, {decrypted_buffer, sizeof(decrypted_buffer)});
+    if (decrypted_len == 0) {
         // Decryption failed or empty packet, don't write to TUN
         return false;
     }
 
-    write_tun(tundesc, data);
+    write(tundesc, decrypted_buffer, decrypted_len);
     return true;
 }
 
@@ -455,15 +466,18 @@ bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
 */
 bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc)
 {
-    string data = read_tun(tundesc);
-    if (data.length() == 0)
-    {
+    // Use a static buffer to avoid reallocation on every call
+    static char plaintext_buffer[MAXLINE];
+    static char encrypted_buffer[MAXLINE];
+
+    int nbytes = read(tundesc, plaintext_buffer, sizeof(plaintext_buffer));
+    if (nbytes <= 0) {
         return false;
     }
 
-    string encrypted_data = encrypt_data(key, data);
-
-    send_encrypted(socket, remote_endpoint, encrypted_data);
+    size_t encrypted_len = encrypt_data(key, {plaintext_buffer, (size_t)nbytes}, {encrypted_buffer, sizeof(encrypted_buffer)});
+    
+    socket.send_to(boost::asio::buffer(encrypted_buffer, encrypted_len), remote_endpoint);
     return true;
 }
 
@@ -1208,6 +1222,11 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
 
 int main(int argc, char *argv[])
 {
+    // Set a higher CPU priority for the process
+    if (setpriority(PRIO_PROCESS, 0, -10) != 0) {
+        perror("Warning: Failed to set process priority");
+    }
+
     if (argc < 1 || argc > 3)
     {
         help();
