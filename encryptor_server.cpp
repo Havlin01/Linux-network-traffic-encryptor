@@ -1372,11 +1372,26 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         std::vector<unsigned char> key_decrypt(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
         std::vector<unsigned char> key_encrypt(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
 
-        const std::chrono::seconds keepalive_interval(15);
-        auto last_udp_send_time = std::chrono::steady_clock::now();
-        const std::string keepalive_msg_to_client = "KEEPALIVE_S";
+        std::atomic<bool> shutdown_flag{false};
 
-        while (true)
+        // Thread 1: Handles TUN -> UDP (Encryption)
+        std::thread encrypt_thread([&]() {
+            while (!shutdown_flag) {
+                // This will block until there is data to read from the TUN device
+                E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc);
+            }
+        });
+
+        // Thread 2: Handles UDP -> TUN (Decryption)
+        std::thread decrypt_thread([&]() {
+            while (!shutdown_flag) {
+                // This will block until a UDP packet is received
+                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc);
+            }
+        });
+
+        // Main thread now only handles control messages on the TCP socket
+        while (!shutdown_flag)
         {
 
             fd_set fds;
@@ -1384,13 +1399,10 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
 
             int tcp_native = tcp_socket.native_handle();
             FD_SET(tcp_native, &fds);
-
-            int udp_native = udp_socket.native_handle();
-            FD_SET(udp_native, &fds);
-
-            FD_SET(tundesc, &fds);
-
-            int max_fd = std::max({tundesc, tcp_native, udp_native});
+            
+            // We only listen on the TCP socket for control messages now.
+            // Data is handled by the dedicated threads.
+            int max_fd = tcp_native;
 
             // Set a timeout for select(). This allows the loop to periodically
             // perform tasks like sending keep-alives even if there's no socket activity.
@@ -1400,7 +1412,7 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
             if (ret < 0)
             {
                 perror("select() error");
-                break;
+                shutdown_flag.store(true);
             }
 
 
@@ -1430,29 +1442,26 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                         else
                         {
                             std::cerr << "Rekey failed, closing connection.\n";
-                            break; // Exit loop on rekey failure
+                            shutdown_flag.store(true);
                         }
                     }
                 }
                 else if (ec != boost::asio::error::would_block)
                 {
                     std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
-                    break; // Exit loop on error or disconnect
+                    shutdown_flag.store(true);
                 }
             }
-
-            // 2. Process TUN->UDP traffic (if select indicated activity)
-            if (FD_ISSET(tundesc, &fds))
-            {
-                E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc);
-            }
-
-            // 3. Process UDP->TUN traffic (if select indicated activity)
-            if (FD_ISSET(udp_native, &fds))
-            {
-                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc);
-            }
         }
+
+        // Wait for worker threads to finish
+        if (encrypt_thread.joinable()) {
+            encrypt_thread.join();
+        }
+        if (decrypt_thread.joinable()) {
+            decrypt_thread.join();
+        }
+
         tcp_socket.close();
         udp_socket.close();
     }

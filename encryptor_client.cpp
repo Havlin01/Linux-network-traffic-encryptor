@@ -1331,9 +1331,27 @@ int main(int argc, char *argv[])
             const std::string keepalive_msg_to_server = "KEEPALIVE_C";
             udp_socket.non_blocking(true);
 
+            // Restore blocking mode for the main control loop's select()
             tcp_socket.non_blocking(true);
 
             bool connection_shutdown_flag = false;
+
+            // Thread 1: Handles TUN -> UDP (Encryption)
+            std::thread encrypt_thread([&]() {
+                while (!connection_shutdown_flag) {
+                    // This will block until there is data to read from the TUN device
+                    E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc);
+                }
+            });
+
+            // Thread 2: Handles UDP -> TUN (Decryption)
+            std::thread decrypt_thread([&]() {
+                while (!connection_shutdown_flag) {
+                    // This will block until a UDP packet is received
+                    D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc);
+                }
+            });
+
             while (!connection_shutdown_flag)
             {
                 // Use select() to wait for activity on any socket or a timeout.
@@ -1343,13 +1361,9 @@ int main(int argc, char *argv[])
 
                 int tcp_native = tcp_socket.native_handle();
                 FD_SET(tcp_native, &fds);
-
-                int udp_native = udp_socket.native_handle();
-                FD_SET(udp_native, &fds);
-
-                FD_SET(tundesc, &fds);
-
-                int max_fd = std::max({tundesc, tcp_native, udp_native});
+                
+                // Control thread only listens on TCP socket
+                int max_fd = tcp_native;
 
                 // A short timeout ensures the loop iterates regularly to check flags.
                 struct timeval tv = {0, 100000}; // 100ms timeout
@@ -1445,28 +1459,17 @@ int main(int argc, char *argv[])
                     }
                 }
 
-                // 3. Process TUN->UDP traffic (if select indicated activity)
-                if (FD_ISSET(tundesc, &fds))
-                {
-                    if (E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc))
-                    {
-                        last_udp_send_time = std::chrono::steady_clock::now();
-                    }
-                }
-
-                // 4. Process UDP->TUN traffic (if select indicated activity)
-                if (FD_ISSET(udp_native, &fds))
-                {
-                    D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc);
-                }
-
-                // 5. Handle keep-alive for idle connections
+                // The keep-alive logic is now simplified as the data threads are independent
                 if (ret == 0)
                 { // This means select() timed out, i.e., no activity
                     auto now = std::chrono::steady_clock::now();
                     if (now - last_udp_send_time > keepalive_interval)
                     {
-                        udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_server), server_udp_ep);
+                        boost::system::error_code ec_udp;
+                        udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_server), server_udp_ep, 0, ec_udp);
+                        if (ec_udp) {
+                             std::cerr << "Keepalive send failed: " << ec_udp.message() << std::endl;
+                        }
                         last_udp_send_time = now;
                     }
                 }
@@ -1474,6 +1477,14 @@ int main(int argc, char *argv[])
 
             // Cleanup on shutdown
             std::cout << "Connection closing. Cleaning up resources.\n";
+            
+            // Wait for worker threads to finish
+            if (encrypt_thread.joinable()) {
+                encrypt_thread.join();
+            }
+            if (decrypt_thread.joinable()) {
+                decrypt_thread.join();
+            }
             tcp_socket.close();
             udp_socket.close();
         }
