@@ -67,16 +67,6 @@ std::vector<uint8_t> sha3_512(const std::vector<uint8_t> &data);
 string xy_str;
 string kyber_cipher_data_str;
 string qkd_parameter;
-std::mutex m1;
-
-int get_order(std::atomic<int> &read_order)
-{
-    m1.lock();
-    read_order = (read_order % 100000) + 1;
-    int order = read_order;
-    m1.unlock();
-    return order;
-}
 
 void send_framed_message(tcp::socket &socket, const std::string &msg)
 {
@@ -434,7 +424,7 @@ string decrypt_data(const std::vector<unsigned char> &key, const string &cipher_
    Receives, decrypts, and writes data to the TUN interface.
    Returns false if there are no more data available on socket.
 */
-bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc, std::atomic<int> &read_order, std::atomic<int> &send_order)
+bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc)
 {
     string data;
     string encrypted_data = data_recieve(socket, remote_endpoint);
@@ -449,25 +439,13 @@ bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
         return false;
     }
 
-    int order = get_order(read_order);
+    data = decrypt_data(key, encrypted_data);
+    if (data.empty()) {
+        // Decryption failed or empty packet, don't write to TUN
+        return false;
+    }
 
-    try
-    {
-        data = decrypt_data(key, encrypted_data);
-    }
-    catch (...)
-    {
-        while (order != send_order)
-        {
-        }
-        send_order = (send_order % 100000) + 1;
-        return true;
-    }
-    while (order != send_order)
-    {
-    }
     write_tun(tundesc, data);
-    send_order = (send_order % 100000) + 1;
     return true;
 }
 
@@ -475,7 +453,7 @@ bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
    Reads from the TUN interface, encrypts, and sends data.
    Returns false if there are no more data available on virtual interface.
 */
-bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc, std::atomic<int> &read_order, std::atomic<int> &send_order)
+bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc)
 {
     string data = read_tun(tundesc);
     if (data.length() == 0)
@@ -483,32 +461,10 @@ bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
         return false;
     }
 
-    int order = get_order(read_order);
-
     string encrypted_data = encrypt_data(key, data);
 
-    while (order != send_order)
-    {
-    }
-
     send_encrypted(socket, remote_endpoint, encrypted_data);
-    send_order = (send_order % 100000) + 1;
     return true;
-}
-
-void thread_encrypt(udp::socket *socket, udp::endpoint remote_endpoint, const std::vector<unsigned char> *key_encrypt, const std::vector<unsigned char> *key_decrypt, int tundesc, std::atomic<int> *threads, std::atomic<int> *read_order, std::atomic<int> *send_order)
-{
-    for (int i = 0; i < 100; i++)
-    {
-        while (E_N_C_R(*socket, remote_endpoint, *key_encrypt, tundesc, *read_order, *send_order))
-        {
-        }
-
-        while (D_E_C_R(*socket, remote_endpoint, *key_decrypt, tundesc, *read_order, *send_order))
-        {
-        }
-    }
-    *threads += 1;
 }
 
 std::string to_hex(const std::vector<uint8_t> &data)
@@ -1358,9 +1314,6 @@ int main(int argc, char *argv[])
 
             tcp_socket.non_blocking(true);
 
-            std::atomic<bool> shutdown_flag{false};
-            std::atomic<int> read_order = 0, send_order = 1;
-
             while (!shutdown_flag)
             {
                 // Use select() to wait for activity on any socket or a timeout.
@@ -1475,7 +1428,7 @@ int main(int argc, char *argv[])
                 // 3. Process TUN->UDP traffic (if select indicated activity)
                 if (FD_ISSET(tundesc, &fds))
                 {
-                    if (E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc, read_order, send_order))
+                    if (E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc))
                     {
                         last_udp_send_time = std::chrono::steady_clock::now();
                     }
@@ -1484,7 +1437,7 @@ int main(int argc, char *argv[])
                 // 4. Process UDP->TUN traffic (if select indicated activity)
                 if (FD_ISSET(udp_native, &fds))
                 {
-                    D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc, read_order, send_order);
+                    D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc);
                 }
 
                 // 5. Handle keep-alive for idle connections
