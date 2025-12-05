@@ -1356,22 +1356,23 @@ void handle_client(tcp::socket tcp_socket, int tundesc, const std::string &chose
         // Create a dedicated UDP socket for this client on an ephemeral port
         udp_socket.open(udp::v4());
         udp_socket.bind(udp::endpoint(udp::v4(), 0));
-        udp::endpoint client_udp_ep;
+        
         unsigned short udp_port = udp_socket.local_endpoint().port();
         std::cout << "Client " << tcp_socket.remote_endpoint().address()
                   << " assigned to dedicated UDP port: " << udp_port << std::endl;
 
-        // Send the new UDP port to the client over TCP
         std::string port_msg = std::to_string(udp_port);
         send_framed_message(tcp_socket, port_msg);
 
-        // Now perform the handshake on the dedicated socket (can be blocking)
+        // This endpoint will be populated by the first receive_from and used for the entire session.
+        udp::endpoint client_udp_ep; 
 
+        // Perform the UDP handshake on the dedicated socket.
         char udp_buf[1024];
         // This initial UDP handshake should be blocking to ensure it completes.
         udp_socket.non_blocking(false);
-        tcp_socket.non_blocking(false); // Ensure TCP is also blocking for initial phase
 
+        // This call populates client_udp_ep with the client's address and port.
         size_t len = udp_socket.receive_from(boost::asio::buffer(udp_buf), client_udp_ep);
         std::cout << "Server received UDP: " << std::string(udp_buf, len) << "\n";
 
@@ -1431,10 +1432,11 @@ void handle_client(tcp::socket tcp_socket, int tundesc, const std::string &chose
                         tcp_socket.non_blocking(false, ec); // Temporarily block for rekey
                         if (ec) { std::cerr << "Failed to set TCP to blocking: " << ec.message() << std::endl; goto end_loop; }
 
-                        // The client will send "INIT_REKEY" to start. We need to read that first.
-                        boost::asio::read(tcp_socket, boost::asio::buffer(bufferTCP, 10)); // "INIT_REKEY" is 10 chars
+                        // The client sends "INIT_REKEY" right after. We must read it to stay in sync.
+                        std::string rekey_init_msg = receive_framed_message(tcp_socket);
+                        std::cout << "Received rekey command: " << rekey_init_msg << std::endl;
 
-                        std::vector<unsigned char> new_key_material = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg); // This performs the full handshake
+                        std::vector<unsigned char> new_key_material = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
                         tcp_socket.non_blocking(true, ec);  // Restore non-blocking for select() loop
 
                         if (new_key_material.size() >= AES_GCM_KEY_LEN * 2)
