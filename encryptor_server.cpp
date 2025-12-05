@@ -458,11 +458,14 @@ bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
     static char encrypted_buffer[MAXLINE];
     static char decrypted_buffer[MAXLINE];
 
+    // Set the socket to blocking for this operation
+    socket.non_blocking(false);
     boost::system::error_code error;
     size_t encrypted_len = socket.receive_from(boost::asio::buffer(encrypted_buffer), remote_endpoint, 0, error);
+    socket.non_blocking(true); // Revert to non-blocking
 
     if (error || encrypted_len == 0) {
-        return false;
+        return false; // This will now only happen on a genuine error
     }
 
     if (encrypted_len == keepalive_msg_from_client.length() && memcmp(encrypted_buffer, keepalive_msg_from_client.c_str(), encrypted_len) == 0)
@@ -491,7 +494,11 @@ bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
     static char plaintext_buffer[MAXLINE];
     static char encrypted_buffer[MAXLINE];
 
+    // read() on a non-blocking descriptor can return -1 with EAGAIN/EWOULDBLOCK.
+    // Since select() told us there is data, we can read without worrying about blocking indefinitely.
     int nbytes = read(tundesc, plaintext_buffer, sizeof(plaintext_buffer));
+    // The TUN device is already opened in non-blocking mode, which is fine.
+    // The select() call ensures we don't call read() unless there's data.
     if (nbytes <= 0) {
         return false;
     }
@@ -1412,10 +1419,17 @@ void handle_client(tcp::socket tcp_socket, int tundesc, const std::string &chose
                     std::string msg(bufferTCP, status);
                     if (msg.starts_with("REKEY_CLIENT_INITIATED"))
                     {
-                        std::cout << "Client initiated rekey" << std::endl;
+                        std::cout << "Client initiated rekey. Switching to blocking mode for handshake." << std::endl;
+                        
+                        // The rekey function expects blocking sockets.
                         tcp_socket.non_blocking(false, ec); // Temporarily block for rekey
-                        std::vector<unsigned char> new_key_material = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-                        tcp_socket.non_blocking(true, ec);  // Restore non-blocking
+                        if (ec) { std::cerr << "Failed to set TCP to blocking: " << ec.message() << std::endl; goto end_loop; }
+
+                        // The client will send "INIT_REKEY" to start. We need to read that first.
+                        boost::asio::read(tcp_socket, boost::asio::buffer(bufferTCP, 10)); // "INIT_REKEY" is 10 chars
+
+                        std::vector<unsigned char> new_key_material = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg); // This performs the full handshake
+                        tcp_socket.non_blocking(true, ec);  // Restore non-blocking for select() loop
 
                         if (new_key_material.size() >= AES_GCM_KEY_LEN * 2)
                         {
