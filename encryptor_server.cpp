@@ -1287,10 +1287,11 @@ std::vector<unsigned char> rekey_srv(tcp::socket &new_socket, std::string qkd_ip
     }
 }
 
-void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, int tundesc, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
+void handle_client(tcp::socket tcp_socket, int tundesc, const std::string &chosen_pqc_alg, const std::string &qkd_ip)
 {
     std::vector<unsigned char> aes_keys;
-    udp::socket udp_socket(io_context);
+    boost::asio::io_context client_io_context;
+    udp::socket udp_socket(client_io_context);
 
     try
     {
@@ -1372,48 +1373,32 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         std::vector<unsigned char> key_decrypt(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
         std::vector<unsigned char> key_encrypt(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
 
-        std::atomic<bool> shutdown_flag{false};
-
-        // Thread 1: Handles TUN -> UDP (Encryption)
-        std::thread encrypt_thread([&]() {
-            while (!shutdown_flag) {
-                // This will block until there is data to read from the TUN device
-                E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc);
-            }
-        });
-
-        // Thread 2: Handles UDP -> TUN (Decryption)
-        std::thread decrypt_thread([&]() {
-            while (!shutdown_flag) {
-                // This will block until a UDP packet is received
-                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc);
-            }
-        });
-
-        // Main thread now only handles control messages on the TCP socket
-        while (!shutdown_flag)
+        // Main I/O loop using select() for all file descriptors
+        while (true)
         {
-
             fd_set fds;
             FD_ZERO(&fds);
 
             int tcp_native = tcp_socket.native_handle();
-            FD_SET(tcp_native, &fds);
-            
-            // We only listen on the TCP socket for control messages now.
-            // Data is handled by the dedicated threads.
-            int max_fd = tcp_native;
+            int udp_native = udp_socket.native_handle();
 
-            // Set a timeout for select(). This allows the loop to periodically
-            // perform tasks like sending keep-alives even if there's no socket activity.
-            struct timeval tv = {1, 0}; // 1-second timeout
-            int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
+            FD_SET(tcp_native, &fds);
+            FD_SET(udp_native, &fds);
+            FD_SET(tundesc, &fds);
+
+            int max_fd = std::max({tcp_native, udp_native, tundesc});
+
+            // select() will block until there is activity on one of the FDs.
+            // No timeout is needed unless you want to perform periodic tasks.
+            int ret = select(max_fd + 1, &fds, NULL, NULL, NULL);
 
             if (ret < 0)
             {
                 perror("select() error");
-                shutdown_flag.store(true);
+                break; // Exit loop on select error
             }
+
+            if (ret == 0) continue; // Should not happen with NULL timeout, but good practice
 
 
             // 1. Check for TCP commands from the client (e.g., rekey)
@@ -1442,26 +1427,31 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
                         else
                         {
                             std::cerr << "Rekey failed, closing connection.\n";
-                            shutdown_flag.store(true);
+                            goto end_loop; // Break out of the while loop
                         }
                     }
                 }
                 else if (ec != boost::asio::error::would_block)
                 {
                     std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
-                    shutdown_flag.store(true);
+                    break; // Exit loop
                 }
+            }
+
+            // 2. Check for data from TUN to encrypt and send over UDP
+            if (FD_ISSET(tundesc, &fds))
+            {
+                E_N_C_R(udp_socket, client_udp_ep, key_encrypt, tundesc);
+            }
+
+            // 3. Check for data from UDP to decrypt and write to TUN
+            if (FD_ISSET(udp_native, &fds))
+            {
+                D_E_C_R(udp_socket, client_udp_ep, key_decrypt, tundesc);
             }
         }
 
-        // Wait for worker threads to finish
-        if (encrypt_thread.joinable()) {
-            encrypt_thread.join();
-        }
-        if (decrypt_thread.joinable()) {
-            decrypt_thread.join();
-        }
-
+    end_loop:
         tcp_socket.close();
         udp_socket.close();
     }
@@ -1539,9 +1529,9 @@ int main(int argc, char *argv[])
             acceptor.accept(socket);
 
             client_threads.emplace_back(
-                [&io_context, s = std::move(socket), tundesc, chosen_pqc_alg, qkd_ip]() mutable
+                [s = std::move(socket), tundesc, chosen_pqc_alg, qkd_ip]() mutable
                 {
-                    handle_client(io_context, std::move(s), tundesc, chosen_pqc_alg, qkd_ip);
+                    handle_client(std::move(s), tundesc, chosen_pqc_alg, qkd_ip);
                 });
         }
     }
