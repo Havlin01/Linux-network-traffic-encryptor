@@ -40,7 +40,7 @@ using boost::asio::ip::udp;
 
 #define PORT 62000
 #define KEYPORT 61000
-#define MAXLINE 4096
+#define MAXLINE 65536
 #define AES_GCM_KEY_LEN 32
 #define AES_GCM_IV_LEN 12
 #define TAG_SIZE 16
@@ -448,72 +448,71 @@ size_t decrypt_data(const std::vector<unsigned char> &key, const std::span<const
     }
 }
 
-/*
-   Receives, decrypts, and writes data to the TUN interface.
-   Returns false if there are no more data available on socket.
-*/
-bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc)
-{
-    // Use a static buffer to avoid reallocation on every call
-    static char encrypted_buffer[MAXLINE];
-    static char decrypted_buffer[MAXLINE];
 
-    // Set the socket to blocking for this operation
-    socket.non_blocking(false);
-    boost::system::error_code error;
-    size_t encrypted_len = socket.receive_from(boost::asio::buffer(encrypted_buffer), remote_endpoint, 0, error);
-    socket.non_blocking(true); // Revert to non-blocking
-
-    if (error || encrypted_len == 0) {
-        return false; // This will now only happen on a genuine error
-    }
-
-    if (encrypted_len == keepalive_msg_from_client.length() && memcmp(encrypted_buffer, keepalive_msg_from_client.c_str(), encrypted_len) == 0)
-    {
-        // It's just a keep-alive from the client, ignore it and report no real data.
-        return false;
-    }
-
-    size_t decrypted_len = decrypt_data(key, {encrypted_buffer, encrypted_len}, {decrypted_buffer, sizeof(decrypted_buffer)});
-    if (decrypted_len == 0) {
-        // Decryption failed or empty packet, don't write to TUN
-        return false;
-    }
-    
-    write(tundesc, decrypted_buffer, decrypted_len);
-    return true;
-}
 
 /*
    Reads from the TUN interface, encrypts, and sends data.
    Returns false if there are no more data available on virtual interface.
 */
-bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc)
+bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint,
+             const std::vector<unsigned char> &key, int tundesc)
 {
-    // Use a static buffer to avoid reallocation on every call
+    static char encrypted_buffer[MAXLINE];
+    static char decrypted_buffer[MAXLINE];
+
+    boost::system::error_code error;
+    size_t encrypted_len = socket.receive_from(boost::asio::buffer(encrypted_buffer), remote_endpoint, 0, error);
+
+    if (error || encrypted_len == 0) return false;
+
+    // Keep-alive check (optional)
+    if (encrypted_len == keepalive_msg_from_client.length() &&
+        memcmp(encrypted_buffer, keepalive_msg_from_client.c_str(), encrypted_len) == 0)
+        return false;
+
+    size_t decrypted_len = decrypt_data(key, {encrypted_buffer, encrypted_len}, {decrypted_buffer, sizeof(decrypted_buffer)});
+    if (decrypted_len == 0) return false;
+
+    // Write full IP packet to TUN
+    size_t written = 0;
+    while (written < decrypted_len) {
+        ssize_t n = write(tundesc, decrypted_buffer + written, decrypted_len - written);
+        if (n < 0) {
+            perror("write to TUN failed");
+            return false;
+        }
+        written += n;
+    }
+
+    return true;
+}
+
+bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint,
+             const std::vector<unsigned char> &key, int tundesc)
+{
     static char plaintext_buffer[MAXLINE];
     static char encrypted_buffer[MAXLINE];
 
-    // Temporarily set the TUN file descriptor to blocking to ensure a full packet read.
-    // select() has already confirmed that data is available, so this won't block indefinitely.
     int flags = fcntl(tundesc, F_GETFL, 0);
-    fcntl(tundesc, F_SETFL, flags & ~O_NONBLOCK);
+    fcntl(tundesc, F_SETFL, flags & ~O_NONBLOCK); // blocking read
 
-    int nbytes = read(tundesc, plaintext_buffer, sizeof(plaintext_buffer));
+    ssize_t nbytes = read(tundesc, plaintext_buffer, sizeof(plaintext_buffer));
+    fcntl(tundesc, F_SETFL, flags | O_NONBLOCK); // restore non-blocking
 
-    // Restore the non-blocking flag for the next select() loop iteration.
-    fcntl(tundesc, F_SETFL, flags | O_NONBLOCK);
+    if (nbytes <= 0) return false;
 
-    if (nbytes <= 0) {
-        // This would indicate an error or EOF if it happens after select() said data was ready.
-        return false;
+    size_t encrypted_len = encrypt_data(key, {plaintext_buffer, (size_t)nbytes},
+                                        {encrypted_buffer, sizeof(encrypted_buffer)});
+
+    // Ensure all bytes are sent
+    size_t sent = 0;
+    while (sent < encrypted_len) {
+        sent += socket.send_to(boost::asio::buffer(encrypted_buffer + sent, encrypted_len - sent), remote_endpoint);
     }
 
-    size_t encrypted_len = encrypt_data(key, {plaintext_buffer, (size_t)nbytes}, {encrypted_buffer, sizeof(encrypted_buffer)});
-    
-    socket.send_to(boost::asio::buffer(encrypted_buffer, encrypted_len), remote_endpoint);
     return true;
 }
+
 
 std::string to_hex(const std::vector<uint8_t> &data)
 {
