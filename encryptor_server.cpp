@@ -494,12 +494,18 @@ bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vec
     static char plaintext_buffer[MAXLINE];
     static char encrypted_buffer[MAXLINE];
 
-    // read() on a non-blocking descriptor can return -1 with EAGAIN/EWOULDBLOCK.
-    // Since select() told us there is data, we can read without worrying about blocking indefinitely.
+    // Temporarily set the TUN file descriptor to blocking to ensure a full packet read.
+    // select() has already confirmed that data is available, so this won't block indefinitely.
+    int flags = fcntl(tundesc, F_GETFL, 0);
+    fcntl(tundesc, F_SETFL, flags & ~O_NONBLOCK);
+
     int nbytes = read(tundesc, plaintext_buffer, sizeof(plaintext_buffer));
-    // The TUN device is already opened in non-blocking mode, which is fine.
-    // The select() call ensures we don't call read() unless there's data.
+
+    // Restore the non-blocking flag for the next select() loop iteration.
+    fcntl(tundesc, F_SETFL, flags | O_NONBLOCK);
+
     if (nbytes <= 0) {
+        // This would indicate an error or EOF if it happens after select() said data was ready.
         return false;
     }
 
