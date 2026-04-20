@@ -40,7 +40,7 @@ using boost::asio::ip::udp;
 
 #define PORT 62000
 #define KEYPORT 61000
-#define MAXLINE 4096
+#define MAXLINE 20480
 #define AES_GCM_KEY_LEN 32
 #define AES_GCM_IV_LEN 12
 #define TAG_SIZE 16
