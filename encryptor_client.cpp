@@ -619,6 +619,22 @@ EVP_PKEY *create_pqc_pubkey_from_raw(const std::string &alg_name, const std::vec
     return pkey;
 }
 
+// Helper: List available OQS KEM algorithms
+void list_available_kem_algorithms()
+{
+    std::cout << "\nAvailable OQS KEM algorithms:\n";
+    int count = OQS_KEM_alg_count();
+    for (int i = 0; i < count; i++)
+    {
+        const char *alg = OQS_KEM_alg_identifier(i);
+        if (alg && OQS_KEM_alg_is_enabled(alg))
+        {
+            std::cout << "  - " << alg << "\n";
+        }
+    }
+    std::cout << "\n";
+}
+
 // Generate HQC-256 keypair using direct OQS API (runtime interface)
 std::pair<std::vector<uint8_t>, std::vector<uint8_t>> generate_pqc_keypair_hqc()
 {
@@ -626,6 +642,8 @@ std::pair<std::vector<uint8_t>, std::vector<uint8_t>> generate_pqc_keypair_hqc()
     if (kem == NULL)
     {
         std::cerr << "generate_pqc_keypair_hqc: OQS_KEM_new failed for HQC-256\n";
+        std::cerr << "HQC-256 may not be enabled in liboqs. ";
+        list_available_kem_algorithms();
         return {{}, {}};
     }
 
