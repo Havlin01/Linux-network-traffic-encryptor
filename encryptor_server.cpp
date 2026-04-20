@@ -34,7 +34,6 @@
 #include <string_view>
 #include <oqs/oqs.h>
 #include <oqs/kem.h>
-#include <oqs/kem_hqc.h>
 
 using boost::asio::ip::tcp;
 using boost::asio::ip::udp;

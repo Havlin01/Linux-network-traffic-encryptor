@@ -37,7 +37,6 @@ using boost::asio::ip::udp;
 #include <openssl/objects.h>
 #include <oqs/oqs.h>
 #include <oqs/kem.h>
-#include <oqs/kem_hqc.h>
 
 constexpr size_t MLKEM768_PKEY_LEN = 1184;
 constexpr size_t MLKEM768_SS_LEN = 32;
