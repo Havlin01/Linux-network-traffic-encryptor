@@ -1,8 +1,8 @@
 #include <thread>
 #include <atomic>
 #include <ctime>
-#include <utility>        // For std::exchange, must be before asio
-#include <boost/asio.hpp> // Include Boost.Asio before system network headers
+#include <utility>        
+#include <boost/asio.hpp> 
 #include <signal.h>
 #include <fstream>
 #include <sstream>
@@ -10,7 +10,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
-#include <linux/if.h> // Now included after Boost.Asio
+#include <linux/if.h> 
 #include <linux/if_tun.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,7 +24,7 @@
 #include <string>
 #include <cstring>
 #include <cstdint>
-#include <map> // Added for PQC algorithm properties
+#include <map>
 #include <iomanip>
 #include <iterator>
 #include <openssl/core_names.h>
@@ -35,6 +35,9 @@
 using boost::asio::ip::tcp;
 using boost::asio::ip::udp;
 #include <openssl/objects.h>
+#include <oqs/oqs.h>
+#include <oqs/kem.h>
+#include <oqs/kem_hqc.h>
 
 constexpr size_t MLKEM768_PKEY_LEN = 1184;
 constexpr size_t MLKEM768_SS_LEN = 32;
@@ -44,6 +47,11 @@ constexpr size_t MLKEM768_SS_LEN = 32;
 #define AES_GCM_KEY_LEN 32
 #define AES_GCM_IV_LEN 12
 #define TAG_SIZE 16
+
+#define HQC_256_PK_LEN      7245
+#define HQC_256_SK_LEN      7317
+#define HQC_256_CT_LEN      14421
+#define HQC_256_SS_LEN      64
 
 #define VALIDATE_CERT "server.crt"
 #define SERVER_CA_CERT "ca.crt"
@@ -365,7 +373,7 @@ string encrypt_data(const std::vector<unsigned char> &key, const string &plainte
 
     EVP_CIPHER_CTX_free(ctx);
 
-    // Prepend IV and append tag to ciphertext
+
     string result(reinterpret_cast<const char *>(iv.data()), iv.size());
     result.append(reinterpret_cast<const char *>(ciphertext.data()), ciphertext.size());
     result.append(reinterpret_cast<const char *>(tag.data()), tag.size());
@@ -377,7 +385,7 @@ string decrypt_data(const std::vector<unsigned char> &key, const string &cipher_
 {
     if (cipher_with_iv_tag.length() < AES_GCM_IV_LEN + TAG_SIZE)
     {
-        return ""; // Not enough data
+        return ""; 
     }
 
     EVP_CIPHER_CTX *ctx;
@@ -416,7 +424,7 @@ string decrypt_data(const std::vector<unsigned char> &key, const string &cipher_
     }
     else
     {
-        return ""; // Authentication failed
+        return ""; 
     }
 }
 
@@ -599,7 +607,7 @@ EVP_PKEY *create_pqc_pubkey_from_raw(const std::string &alg_name, const std::vec
 {
     EVP_PKEY *pkey = EVP_PKEY_new_raw_public_key_ex(
         /*libctx=*/NULL,
-        alg_name.c_str(), // "ML-KEM-768"
+        alg_name.c_str(),
         /*propq=*/NULL,
         raw_pkey.data(),
         raw_pkey.size());
@@ -610,6 +618,22 @@ EVP_PKEY *create_pqc_pubkey_from_raw(const std::string &alg_name, const std::vec
         return nullptr;
     }
     return pkey;
+}
+
+// Generate HQC-256 keypair using direct OQS API
+std::pair<std::vector<uint8_t>, std::vector<uint8_t>> generate_pqc_keypair_hqc()
+{
+    std::vector<uint8_t> pubkey(HQC_256_PK_LEN);
+    std::vector<uint8_t> privkey(HQC_256_SK_LEN);
+
+    OQS_STATUS status = OQS_KEM_hqc_256_keypair(pubkey.data(), privkey.data());
+    if (status != OQS_SUCCESS)
+    {
+        std::cerr << "generate_pqc_keypair_hqc: OQS_KEM_hqc_256_keypair failed\n";
+        return {{}, {}};
+    }
+
+    return {pubkey, privkey};
 }
 
 struct PQCKeyMaterial
@@ -770,6 +794,47 @@ PQCKeyMaterial get_pqckey(tcp::socket &client_socket, const std::string &alg_nam
     send_framed_message(client_socket, std::string(ciphertext.begin(), ciphertext.end()));
 
     EVP_PKEY_free(server_pqc_pubkey);
+    return {shared_secret, ciphertext};
+}
+
+// HQC-256 key exchange: Perform encapsulation with server's public key
+PQCKeyMaterial get_pqckey_hqc(tcp::socket &client_socket)
+{
+    std::string server_pub_str = receive_framed_message(client_socket);
+    std::vector<uint8_t> server_pubkey(server_pub_str.begin(), server_pub_str.end());
+    
+    std::cout << "Client: received HQC-256 public key (len=" << server_pubkey.size() << ")\n";
+    if (server_pubkey.size() != HQC_256_PK_LEN)
+    {
+        std::cerr << "Error: Expected HQC-256 pubkey length " << HQC_256_PK_LEN 
+                  << " but got " << server_pubkey.size() << "\n";
+        return {};
+    }
+    std::cout << "Client DEBUG: received HQC-256 pubkey(hex) = " << to_hex_snippet(server_pubkey) << "\n";
+
+    std::vector<uint8_t> ciphertext(HQC_256_CT_LEN);
+    std::vector<uint8_t> shared_secret(HQC_256_SS_LEN);
+
+    OQS_STATUS status = OQS_KEM_hqc_256_encaps(ciphertext.data(), shared_secret.data(), server_pubkey.data());
+    if (status != OQS_SUCCESS)
+    {
+        std::cerr << "Error: HQC-256 encapsulation failed.\n";
+        return {};
+    }
+
+    std::cout << "Client DEBUG: HQC-256 shared secret(hex) = " << to_hex(shared_secret) << "\n";
+    std::cout << "Client DEBUG: HQC-256 ciphertext(hex) = " << to_hex_snippet(ciphertext) << "\n";
+
+    try
+    {
+        send_framed_message(client_socket, std::string(ciphertext.begin(), ciphertext.end()));
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "Error: Failed to send HQC-256 ciphertext: " << e.what() << "\n";
+        return {};
+    }
+
     return {shared_secret, ciphertext};
 }
 
@@ -1025,11 +1090,11 @@ string get_qkdkey(string qkd_ip, tcp::socket &client_socket)
     string bufferTCP_str = bufferTCP.str();
     cout << "KeyID: " << bufferTCP_str << endl;
 
-    // Hash content of bufferTCP with SHAKE128 using OpenSSL
+   
     std::vector<unsigned char> shake_output(216);
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (!mdctx)
-    { /* handle error */
+    {
         return "";
     }
 
@@ -1068,7 +1133,18 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     std::cout << "Client: received salt (len=" << salt_bytes.size() << ")\n";
     std::cout << "DEBUG: salt(hex) = " << to_hex(salt_bytes) << std::endl;
 
-    PQCKeyMaterial pqc_material = get_pqckey(client_socket, chosen_pqc_alg);
+    PQCKeyMaterial pqc_material;
+    if (chosen_pqc_alg == "hqc-256")
+    {
+        std::cout << "Client: Using HQC-256 for PQC key exchange.\n";
+        pqc_material = get_pqckey_hqc(client_socket);
+    }
+    else
+    {
+        std::cout << "Client: Using ML-KEM-768 for PQC key exchange.\n";
+        pqc_material = get_pqckey(client_socket, chosen_pqc_alg);
+    }
+    
     if (pqc_material.shared_secret.empty())
     {
         std::cerr << "Client: PQC key derivation failed.\n";
@@ -1221,7 +1297,7 @@ int main(int argc, char *argv[])
     }
     int choice;
     std::string chosen_pqc_alg;
-    std::cout << "Choose PQC Algorithm:\n1. MLKEM768 (Kyber768)\n2. HQC-128\nEnter choice: ";
+    std::cout << "Choose PQC Algorithm:\n1. MLKEM768 (Kyber768)\n2. HQC-256\nEnter choice: ";
     std::cin >> choice;
     switch (choice)
     {
@@ -1229,7 +1305,7 @@ int main(int argc, char *argv[])
         chosen_pqc_alg = "ML-KEM-768";
         break;
     case 2:
-        chosen_pqc_alg = "hqc-128";
+        chosen_pqc_alg = "hqc-256";
         break;
     default:
         std::cerr << "Invalid choice, defaulting to Kyber768\n";
@@ -1238,8 +1314,7 @@ int main(int argc, char *argv[])
     }
     std::cout << "Selected PQC Algorithm: " << chosen_pqc_alg << std::endl;
 
-    // --- TUN device setup ---
-    // The TUN device is created once and persists for the application's lifetime.
+    
     int tundesc = -1;
     try
     {
@@ -1252,8 +1327,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // --- Thread and shutdown flag for periodic rekeying ---
-    // These are declared outside the main loop to persist across reconnections.
+
     std::atomic<bool> app_shutdown_flag{false};
     std::atomic<bool> client_rekey_flag{false};
 
@@ -1317,8 +1391,7 @@ int main(int argc, char *argv[])
             bool connection_shutdown_flag = false;
             while (!connection_shutdown_flag)
             {
-                // Use select() to wait for activity on any socket or a timeout.
-                // This is the core of the event loop.
+                
                 fd_set fds;
                 FD_ZERO(&fds);
 
@@ -1333,48 +1406,44 @@ int main(int argc, char *argv[])
                 int max_fd = std::max({tundesc, tcp_native, udp_native});
 
                 // A short timeout ensures the loop iterates regularly to check flags.
-                struct timeval tv = {0, 100000}; // 100ms timeout
+                struct timeval tv = {0, 100000};
                 int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
 
                 if (ret < 0)
                 {
                     perror("select() error");
-                    break; // Exit on select error
+                    break;
                 }
 
                 boost::system::error_code ec;
                 char tcp_buf[1024] = {0};
 
-                // 1. Check for client-initiated rekey flag (checked every loop iteration)
+        
                 if (client_rekey_flag.load())
                 {
                     std::cout << "Periodic rekey triggered by client timer.\n";
 
                     boost::system::error_code ec;
 
-                    // *** FORCE BLOCKING MODE FOR REKEY ***
+                    
                     tcp_socket.non_blocking(false, ec);
 
-                    // --- send rekey request EXACTLY like initial exchange ---
                     boost::asio::write(tcp_socket, boost::asio::buffer("REKEY_CLIENT_INITIATED"));
                     std::cout << "Client-initiated rekey sent\n";
 
                     client_rekey_flag.store(false);
 
-                    // --- QKD data (unchanged) ---
                     std::string qkd_key_buffer;
                     if (!qkd_ip.empty())
                     {
                         qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
                     }
 
-                    // --- perform rekey using your function ---
                     sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
 
-                    // *** RESTORE NON-BLOCKING MODE ***
+                    
                     tcp_socket.non_blocking(true, ec);
 
-                    // --- update keys EXACTLY like initial code ---
                     if (sec_key.empty())
                     {
                         std::cerr << "Client-initiated rekey failed, closing connection.\n";
@@ -1388,7 +1457,7 @@ int main(int argc, char *argv[])
                     }
                 }
 
-                // 2. Check for TCP commands from server (only if select indicated activity)
+                
                 if (FD_ISSET(tcp_native, &fds))
                 {
                     size_t len = tcp_socket.read_some(boost::asio::buffer(tcp_buf), ec);
@@ -1396,7 +1465,7 @@ int main(int argc, char *argv[])
                     {
                         if (std::string(tcp_buf, len) == "REKEY_SERVER_INITIATED")
                         {
-                            // Temporarily set socket to blocking for synchronous rekey protocol
+                            
                             tcp_socket.non_blocking(false, ec);
                             std::string qkd_key_buffer;
                             if (!qkd_ip.empty())
@@ -1405,7 +1474,7 @@ int main(int argc, char *argv[])
                             }
                             sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
 
-                            // Restore non-blocking mode for the main loop
+                           
                             tcp_socket.non_blocking(true, ec);
 
                             if (sec_key.empty())
@@ -1422,11 +1491,11 @@ int main(int argc, char *argv[])
                     else if (ec != boost::asio::error::would_block)
                     {
                         std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
-                        connection_shutdown_flag = true; // Signal shutdown
+                        connection_shutdown_flag = true;
                     }
                 }
 
-                // 3. Process TUN->UDP traffic (if select indicated activity)
+              
                 if (FD_ISSET(tundesc, &fds))
                 {
                     if (E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc))
@@ -1435,15 +1504,15 @@ int main(int argc, char *argv[])
                     }
                 }
 
-                // 4. Process UDP->TUN traffic (if select indicated activity)
+               
                 if (FD_ISSET(udp_native, &fds))
                 {
                     D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc);
                 }
 
-                // 5. Handle keep-alive for idle connections
+               
                 if (ret == 0)
-                { // This means select() timed out, i.e., no activity
+                {
                     auto now = std::chrono::steady_clock::now();
                     if (now - last_udp_send_time > keepalive_interval)
                     {
@@ -1453,7 +1522,6 @@ int main(int argc, char *argv[])
                 }
             }
 
-            // Cleanup on shutdown
             std::cout << "Connection closing. Cleaning up resources.\n";
             tcp_socket.close();
             udp_socket.close();
@@ -1465,13 +1533,11 @@ int main(int argc, char *argv[])
         }
     }
 
-    // Final cleanup when the application exits.
     if (tundesc != -1)
     {
         close(tundesc);
     }
 
-    // Signal the rekey thread to shut down and wait for it to complete.
     app_shutdown_flag.store(true);
     if (rekey_thread.joinable())
     {
