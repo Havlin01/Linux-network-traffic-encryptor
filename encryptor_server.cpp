@@ -659,16 +659,25 @@ EVP_PKEY *generate_pqc_keypair(const std::string &alg_name,
     return pkey;
 }
 
-// Generate HQC-256 keypair using direct OQS API
+// Generate HQC-256 keypair using direct OQS API (runtime interface)
 std::pair<std::vector<uint8_t>, std::vector<uint8_t>> generate_pqc_keypair_hqc()
 {
-    std::vector<uint8_t> pubkey(HQC_256_PK_LEN);
-    std::vector<uint8_t> privkey(HQC_256_SK_LEN);
+    OQS_KEM *kem = OQS_KEM_new("HQC-256");
+    if (kem == NULL)
+    {
+        std::cerr << "generate_pqc_keypair_hqc: OQS_KEM_new failed for HQC-256\n";
+        return {{}, {}};
+    }
 
-    OQS_STATUS status = OQS_KEM_hqc_256_keypair(pubkey.data(), privkey.data());
+    std::vector<uint8_t> pubkey(kem->length_public_key);
+    std::vector<uint8_t> privkey(kem->length_secret_key);
+
+    OQS_STATUS status = kem->keypair(pubkey.data(), privkey.data());
+    OQS_KEM_free(kem);
+    
     if (status != OQS_SUCCESS)
     {
-        std::cerr << "generate_pqc_keypair_hqc: OQS_KEM_hqc_256_keypair failed\n";
+        std::cerr << "generate_pqc_keypair_hqc: keypair generation failed\n";
         return {{}, {}};
     }
 
@@ -902,15 +911,26 @@ PQCKeyMaterial get_pqckey_hqc(tcp::socket &new_socket)
     std::vector<uint8_t> ciphertext(cipher_str.begin(), cipher_str.end());
 
     std::cout << "Server DEBUG: received HQC-256 ciphertext len = " << ciphertext.size() << "\n";
-    if (ciphertext.size() != HQC_256_CT_LEN)
+
+    OQS_KEM *kem = OQS_KEM_new("HQC-256");
+    if (kem == NULL)
     {
-        std::cerr << "Error: Expected HQC-256 ciphertext length " << HQC_256_CT_LEN 
-                  << " but got " << ciphertext.size() << "\n";
+        std::cerr << "Error: OQS_KEM_new failed for HQC-256.\n";
         return {};
     }
 
-    std::vector<uint8_t> shared_secret(HQC_256_SS_LEN);
-    OQS_STATUS status = OQS_KEM_hqc_256_decaps(shared_secret.data(), ciphertext.data(), privkey.data());
+    if (ciphertext.size() != kem->length_ciphertext)
+    {
+        std::cerr << "Error: Expected HQC-256 ciphertext length " << kem->length_ciphertext 
+                  << " but got " << ciphertext.size() << "\n";
+        OQS_KEM_free(kem);
+        return {};
+    }
+
+    std::vector<uint8_t> shared_secret(kem->length_shared_secret);
+    OQS_STATUS status = kem->decaps(shared_secret.data(), ciphertext.data(), privkey.data());
+    OQS_KEM_free(kem);
+    
     if (status != OQS_SUCCESS)
     {
         std::cerr << "Error: HQC-256 decapsulation failed.\n";

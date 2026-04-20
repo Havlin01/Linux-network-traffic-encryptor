@@ -619,16 +619,25 @@ EVP_PKEY *create_pqc_pubkey_from_raw(const std::string &alg_name, const std::vec
     return pkey;
 }
 
-// Generate HQC-256 keypair using direct OQS API
+// Generate HQC-256 keypair using direct OQS API (runtime interface)
 std::pair<std::vector<uint8_t>, std::vector<uint8_t>> generate_pqc_keypair_hqc()
 {
-    std::vector<uint8_t> pubkey(HQC_256_PK_LEN);
-    std::vector<uint8_t> privkey(HQC_256_SK_LEN);
+    OQS_KEM *kem = OQS_KEM_new("HQC-256");
+    if (kem == NULL)
+    {
+        std::cerr << "generate_pqc_keypair_hqc: OQS_KEM_new failed for HQC-256\n";
+        return {{}, {}};
+    }
 
-    OQS_STATUS status = OQS_KEM_hqc_256_keypair(pubkey.data(), privkey.data());
+    std::vector<uint8_t> pubkey(kem->length_public_key);
+    std::vector<uint8_t> privkey(kem->length_secret_key);
+
+    OQS_STATUS status = kem->keypair(pubkey.data(), privkey.data());
+    OQS_KEM_free(kem);
+    
     if (status != OQS_SUCCESS)
     {
-        std::cerr << "generate_pqc_keypair_hqc: OQS_KEM_hqc_256_keypair failed\n";
+        std::cerr << "generate_pqc_keypair_hqc: keypair generation failed\n";
         return {{}, {}};
     }
 
@@ -803,18 +812,29 @@ PQCKeyMaterial get_pqckey_hqc(tcp::socket &client_socket)
     std::vector<uint8_t> server_pubkey(server_pub_str.begin(), server_pub_str.end());
     
     std::cout << "Client: received HQC-256 public key (len=" << server_pubkey.size() << ")\n";
-    if (server_pubkey.size() != HQC_256_PK_LEN)
+
+    OQS_KEM *kem = OQS_KEM_new("HQC-256");
+    if (kem == NULL)
     {
-        std::cerr << "Error: Expected HQC-256 pubkey length " << HQC_256_PK_LEN 
+        std::cerr << "Error: OQS_KEM_new failed for HQC-256.\n";
+        return {};
+    }
+
+    if (server_pubkey.size() != kem->length_public_key)
+    {
+        std::cerr << "Error: Expected HQC-256 pubkey length " << kem->length_public_key 
                   << " but got " << server_pubkey.size() << "\n";
+        OQS_KEM_free(kem);
         return {};
     }
     std::cout << "Client DEBUG: received HQC-256 pubkey(hex) = " << to_hex_snippet(server_pubkey) << "\n";
 
-    std::vector<uint8_t> ciphertext(HQC_256_CT_LEN);
-    std::vector<uint8_t> shared_secret(HQC_256_SS_LEN);
+    std::vector<uint8_t> ciphertext(kem->length_ciphertext);
+    std::vector<uint8_t> shared_secret(kem->length_shared_secret);
 
-    OQS_STATUS status = OQS_KEM_hqc_256_encaps(ciphertext.data(), shared_secret.data(), server_pubkey.data());
+    OQS_STATUS status = kem->encaps(ciphertext.data(), shared_secret.data(), server_pubkey.data());
+    OQS_KEM_free(kem);
+    
     if (status != OQS_SUCCESS)
     {
         std::cerr << "Error: HQC-256 encapsulation failed.\n";
