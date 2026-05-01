@@ -331,9 +331,7 @@ string read_tun(int tundesc)
     return data;
 }
 
-/* Virtual interface data write.
-   Data will appear as if it arrived at
-   virtual interface and can be routed further */
+
 
 void write_tun(int tundesc, string message)
 {
@@ -981,6 +979,7 @@ string get_qkdkey(string qkd_ip, tcp::socket &new_socket)
 
     cout << "QKD keyID recieved: " << bufferTCP << endl;
 
+    
     
     std::vector<unsigned char> shake_output(216);
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
