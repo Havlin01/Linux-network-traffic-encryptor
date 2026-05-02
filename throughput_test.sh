@@ -3,6 +3,9 @@
 # Throughput Testing Script for Linux Debian
 # This script uses iperf3 to test TCP and UDP throughput across varying core/stream counts and MTU sizes.
 
+# Add common local binary path to the PATH to find manually installed tools
+export PATH=$PATH:/usr/local/bin
+
 DEFAULT_SERVER_IP="10.0.1.8"
 RESULTS_FILE="iperf_results.csv"
 
