@@ -1464,24 +1464,18 @@ int main(int argc, char *argv[])
                   epoll_ctl(efd, EPOLL_CTL_ADD, tundesc, &e); }
                 struct epoll_event evs[2];
                 auto last_send = std::chrono::steady_clock::now();
-                int idle_spins = 0;
 
                 while (io_running.load(std::memory_order_relaxed))
                 {
-                    bool did_work;
+                    int n = epoll_wait(efd, evs, 2, 5);
+                    if (n > 0)
                     {
                         std::shared_lock lock(keys_mutex);
-                        did_work = false;
-                        while (E_N_C_R(enc_ctx, udp_socket, server_udp_ep, key_encrypt, tundesc, enc_buf.data()))
-                            did_work = true;
-                    }
-                    if (did_work) {
+                        while (E_N_C_R(enc_ctx, udp_socket, server_udp_ep, key_encrypt, tundesc, enc_buf.data())) {}
                         last_send = std::chrono::steady_clock::now();
-                        idle_spins = 0;
-                    } else if (idle_spins < 50000) {
-                        __builtin_ia32_pause();
-                        ++idle_spins;
-                    } else {
+                    }
+                    else
+                    {
                         auto now = std::chrono::steady_clock::now();
                         if (now - last_send > keepalive_interval)
                         {
@@ -1489,8 +1483,6 @@ int main(int argc, char *argv[])
                             udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_server), server_udp_ep, 0, ka_ec);
                             last_send = now;
                         }
-                        epoll_wait(efd, evs, 2, 5);
-                        idle_spins = 0;
                     }
                 }
                 close(efd);
@@ -1504,25 +1496,13 @@ int main(int argc, char *argv[])
                 { struct epoll_event e{}; e.events = EPOLLIN; e.data.fd = udp_fd;
                   epoll_ctl(efd, EPOLL_CTL_ADD, udp_fd, &e); }
                 struct epoll_event evs[2];
-                int idle_spins = 0;
 
                 while (io_running.load(std::memory_order_relaxed))
                 {
-                    bool did_work;
+                    if (epoll_wait(efd, evs, 2, 5) > 0)
                     {
                         std::shared_lock lock(keys_mutex);
-                        did_work = false;
-                        while (D_E_C_R(dec_ctx, udp_socket, recv_ep, key_decrypt, tundesc, dec_buf.data()))
-                            did_work = true;
-                    }
-                    if (did_work) {
-                        idle_spins = 0;
-                    } else if (idle_spins < 50000) {
-                        __builtin_ia32_pause();
-                        ++idle_spins;
-                    } else {
-                        epoll_wait(efd, evs, 2, 5);
-                        idle_spins = 0;
+                        while (D_E_C_R(dec_ctx, udp_socket, recv_ep, key_decrypt, tundesc, dec_buf.data())) {}
                     }
                 }
                 close(efd);
