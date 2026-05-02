@@ -29,6 +29,7 @@
 #include <vector>
 #include <map>
 #include <array>
+#include <shared_mutex>
 #include <sys/epoll.h>
 #include <openssl/rand.h>
 #include <openssl/hmac.h>
@@ -1497,84 +1498,118 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         std::vector<unsigned char> key_decrypt(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
         std::vector<unsigned char> key_encrypt(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
 
-        // Pre-allocated I/O buffers — no heap allocation per packet
         constexpr size_t IO_BUF_SIZE = AES_GCM_IV_LEN + MAXLINE + TAG_SIZE;
-        std::vector<uint8_t> enc_buf(IO_BUF_SIZE);
-        std::vector<uint8_t> dec_buf(IO_BUF_SIZE);
 
-        // Larger kernel socket buffers to absorb traffic bursts
         udp_socket.set_option(boost::asio::socket_base::receive_buffer_size(4 * 1024 * 1024), ec);
         udp_socket.set_option(boost::asio::socket_base::send_buffer_size(4 * 1024 * 1024), ec);
 
-        int epfd = epoll_create1(EPOLL_CLOEXEC);
-        if (epfd < 0) { perror("epoll_create1"); return; }
+        // shared_mutex: data threads hold shared locks; rekey holds exclusive lock.
+        std::shared_mutex keys_mutex;
+        std::atomic<bool> io_running{true};
 
-        struct epoll_event ev{};
-        ev.events = EPOLLIN;
         int tcp_fd = tcp_socket.native_handle();
         int udp_fd = udp_socket.native_handle();
-        ev.data.fd = tcp_fd;  epoll_ctl(epfd, EPOLL_CTL_ADD, tcp_fd,  &ev);
-        ev.data.fd = udp_fd;  epoll_ctl(epfd, EPOLL_CTL_ADD, udp_fd,  &ev);
-        ev.data.fd = tundesc; epoll_ctl(epfd, EPOLL_CTL_ADD, tundesc, &ev);
 
-        struct epoll_event events[4];
+        // Thread 1 — TUN → encrypt → UDP (runs on its own core)
+        std::thread enc_thread([&]() {
+            std::vector<uint8_t> enc_buf(IO_BUF_SIZE);
+            int efd = epoll_create1(EPOLL_CLOEXEC);
+            struct epoll_event ev{};
+            ev.events = EPOLLIN;
+            ev.data.fd = tundesc;
+            epoll_ctl(efd, EPOLL_CTL_ADD, tundesc, &ev);
+            struct epoll_event evs[2];
+
+            while (io_running.load(std::memory_order_relaxed))
+            {
+                if (epoll_wait(efd, evs, 2, 100) > 0)
+                {
+                    std::shared_lock lock(keys_mutex);
+                    while (E_N_C_R(enc_ctx, udp_socket, client_udp_ep, key_encrypt, tundesc, enc_buf.data())) {}
+                }
+            }
+            close(efd);
+        });
+
+        // Thread 2 — UDP → decrypt → TUN (runs on its own core)
+        std::thread dec_thread([&]() {
+            std::vector<uint8_t> dec_buf(IO_BUF_SIZE);
+            udp::endpoint recv_ep;  // thread-local; avoids races with enc_thread on client_udp_ep
+            int efd = epoll_create1(EPOLL_CLOEXEC);
+            struct epoll_event ev{};
+            ev.events = EPOLLIN;
+            ev.data.fd = udp_fd;
+            epoll_ctl(efd, EPOLL_CTL_ADD, udp_fd, &ev);
+            struct epoll_event evs[2];
+
+            while (io_running.load(std::memory_order_relaxed))
+            {
+                if (epoll_wait(efd, evs, 2, 100) > 0)
+                {
+                    std::shared_lock lock(keys_mutex);
+                    while (D_E_C_R(dec_ctx, udp_socket, recv_ep, key_decrypt, tundesc, dec_buf.data())) {}
+                }
+            }
+            close(efd);
+        });
+
+        // Main thread — TCP rekey only
+        int tcp_efd = epoll_create1(EPOLL_CLOEXEC);
+        {
+            struct epoll_event ev{};
+            ev.events = EPOLLIN;
+            ev.data.fd = tcp_fd;
+            epoll_ctl(tcp_efd, EPOLL_CTL_ADD, tcp_fd, &ev);
+        }
+        struct epoll_event events[2];
         bool running = true;
 
         while (running)
         {
-            int nev = epoll_wait(epfd, events, 4, 1000);
-            if (nev < 0) { perror("epoll_wait"); break; }
+            if (epoll_wait(tcp_efd, events, 2, 1000) <= 0)
+                continue;
 
-            for (int i = 0; i < nev && running; i++)
+            char bufferTCP[4096] = {0};
+            size_t status = tcp_socket.read_some(boost::asio::buffer(bufferTCP), ec);
+
+            if (!ec && status > 0)
             {
-                int fd = events[i].data.fd;
-
-                if (fd == tcp_fd)
+                std::string msg(bufferTCP, status);
+                if (msg.starts_with("REKEY_CLIENT_INITIATED"))
                 {
-                    char bufferTCP[4096] = {0};
-                    size_t status = tcp_socket.read_some(boost::asio::buffer(bufferTCP), ec);
-
-                    if (!ec && status > 0)
+                    std::cout << "Client initiated rekey" << std::endl;
+                    tcp_socket.non_blocking(false, ec);
                     {
-                        std::string msg(bufferTCP, status);
-                        if (msg.starts_with("REKEY_CLIENT_INITIATED"))
+                        // Exclusive lock pauses both data threads until rekey is done
+                        std::unique_lock lock(keys_mutex);
+                        std::vector<unsigned char> new_key_material = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+                        if (new_key_material.size() >= AES_GCM_KEY_LEN * 2)
                         {
-                            std::cout << "Client initiated rekey" << std::endl;
-                            tcp_socket.non_blocking(false, ec);
-                            std::vector<unsigned char> new_key_material = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-                            tcp_socket.non_blocking(true, ec);
-
-                            if (new_key_material.size() >= AES_GCM_KEY_LEN * 2)
-                            {
-                                aes_keys = new_key_material;
-                                key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
-                                key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
-                                std::cout << "Rekey completed & keys updated" << std::endl;
-                            }
-                            else
-                            {
-                                std::cerr << "Rekey failed, closing connection.\n";
-                                running = false;
-                            }
+                            aes_keys = new_key_material;
+                            key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
+                            key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
+                            std::cout << "Rekey completed & keys updated" << std::endl;
+                        }
+                        else
+                        {
+                            std::cerr << "Rekey failed, closing connection.\n";
+                            running = false;
                         }
                     }
-                    else if (ec != boost::asio::error::would_block)
-                    {
-                        std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
-                        running = false;
-                    }
-                }
-                else if (fd == tundesc)
-                {
-                    while (E_N_C_R(enc_ctx, udp_socket, client_udp_ep, key_encrypt, tundesc, enc_buf.data())) {}
-                }
-                else if (fd == udp_fd)
-                {
-                    while (D_E_C_R(dec_ctx, udp_socket, client_udp_ep, key_decrypt, tundesc, dec_buf.data())) {}
+                    tcp_socket.non_blocking(true, ec);
                 }
             }
+            else if (ec != boost::asio::error::would_block)
+            {
+                std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
+                running = false;
+            }
         }
-        close(epfd);
+
+        io_running.store(false);
+        enc_thread.join();
+        dec_thread.join();
+        close(tcp_efd);
         tcp_socket.close();
         udp_socket.close();
     }

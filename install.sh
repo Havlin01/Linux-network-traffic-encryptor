@@ -40,6 +40,15 @@ sudo ip addr add 192.168.1.1 peer 192.168.1.2 dev tun0
 
 echo "1" | sudo tee /proc/sys/net/ipv4/ip_forward
 sudo ip route add $Route_IP via 192.168.1.2
+
+# Clamp TCP MSS on forwarded packets to match TUN MTU (1444 - 40 = 1404).
+# Without this, PMTUD often fails in VirtualBox and TCP performance collapses.
+sudo iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN \
+    -j TCPMSS --set-mss 1404
+
+# Allow kernel to honor the 4MB socket buffers set by the encryptor.
+sudo sysctl -w net.core.rmem_max=8388608
+sudo sysctl -w net.core.wmem_max=8388608
 chmod +x sym-ExpQKD
 g++ -std=c++20 -Wall -O3 -march=native -I"$OPENSSL_INC_PATH" -I"$LIBOQS_INC_PATH" -o encryptor_server encryptor_server.cpp -L"$OPENSSL_LIB_PATH" -L"$LIBOQS_LIB_PATH" -Wl,-rpath,"$OPENSSL_LIB_PATH" -Wl,-rpath,"$LIBOQS_LIB_PATH" -lssl -lcrypto -loqs -pthread
 g++ -std=c++20 -Wall -O3 -march=native -I"$OPENSSL_INC_PATH" -I"$LIBOQS_INC_PATH" -o encryptor_client encryptor_client.cpp -L"$OPENSSL_LIB_PATH" -L"$LIBOQS_LIB_PATH" -Wl,-rpath,"$OPENSSL_LIB_PATH" -Wl,-rpath,"$LIBOQS_LIB_PATH" -lssl -lcrypto -loqs -pthread

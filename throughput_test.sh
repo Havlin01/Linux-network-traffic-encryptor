@@ -52,9 +52,11 @@ MTUS=(576 1300 1444 9000)
 PROTOCOLS=("TCP" "UDP")
 TEST_DURATION=30
 
-# Set to your actual link rate. Using the full link prevents starving the encryptor.
-# If results show 100% packet loss, lower this value.
-UDP_BANDWIDTH="1G"
+# UDP send rate cap. This must be set to roughly 2x your expected VPN throughput.
+# If it is too high (e.g. 1G on a 20 Mbps VPN) iperf3 floods the encryptor,
+# 95%+ of packets are dropped, and the "throughput" reading is meaningless.
+# Start conservatively (e.g. "100M") and raise it once you know your ceiling.
+UDP_BANDWIDTH="200M"
 
 COOLDOWN_SECS=3  # brief pause between tests to let sockets drain
 
@@ -97,15 +99,20 @@ for mtu in "${MTUS[@]}"; do
                     -u -b $UDP_BANDWIDTH -t $TEST_DURATION -P $cores -l $UDP_LEN -J 2>/dev/null \
                     || echo '{"error":"iperf3 failed"}')
 
-                # UDP: sender rate from end.sum (sum_received does not exist for UDP)
-                THROUGHPUT=$(echo "$RESULT" | jq -r \
-                    'if .end.sum.bits_per_second then
-                         .end.sum.bits_per_second / 1000000
-                     else "ERROR" end')
+                # UDP: compute EFFECTIVE (received) throughput = sent * (1 - loss%).
+                # end.sum.bits_per_second is the sender rate; loss comes back via
+                # server feedback. Reporting sender rate alone is misleading when
+                # the VPN drops most packets due to bandwidth overshooting.
                 JITTER=$(echo "$RESULT" | jq -r \
                     'if .end.sum.jitter_ms != null then .end.sum.jitter_ms else "ERROR" end')
                 LOSS=$(echo "$RESULT" | jq -r \
                     'if .end.sum.lost_percent != null then .end.sum.lost_percent else "ERROR" end')
+                THROUGHPUT=$(echo "$RESULT" | jq -r \
+                    'if (.end.sum.bits_per_second != null) and (.end.sum.lost_percent != null) then
+                         .end.sum.bits_per_second * (1 - .end.sum.lost_percent / 100) / 1000000
+                     elif .end.sum.bits_per_second != null then
+                         .end.sum.bits_per_second / 1000000
+                     else "ERROR" end')
             fi
 
             if [[ "$THROUGHPUT" != "ERROR" && -n "$THROUGHPUT" ]]; then

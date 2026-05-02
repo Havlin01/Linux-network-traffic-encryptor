@@ -31,6 +31,7 @@
 #include <openssl/param_build.h>
 #include <openssl/hmac.h>
 #include <array>
+#include <shared_mutex>
 #include <sys/epoll.h>
 #include <span>
 
@@ -1444,129 +1445,160 @@ int main(int argc, char *argv[])
             udp_socket.non_blocking(true);
             tcp_socket.non_blocking(true);
 
-            // Pre-allocated I/O buffers — no heap allocation per packet
             constexpr size_t IO_BUF_SIZE = AES_GCM_IV_LEN + MAXLINE + TAG_SIZE;
-            std::vector<uint8_t> enc_buf(IO_BUF_SIZE);
-            std::vector<uint8_t> dec_buf(IO_BUF_SIZE);
 
-            // Larger kernel socket buffers to absorb traffic bursts
             udp_socket.set_option(boost::asio::socket_base::receive_buffer_size(4 * 1024 * 1024), ec);
             udp_socket.set_option(boost::asio::socket_base::send_buffer_size(4 * 1024 * 1024), ec);
 
-            int epfd = epoll_create1(EPOLL_CLOEXEC);
-            if (epfd < 0) { perror("epoll_create1"); break; }
+            std::shared_mutex keys_mutex;
+            std::atomic<bool> io_running{true};
 
-            struct epoll_event ev{};
-            ev.events = EPOLLIN;
             int tcp_fd = tcp_socket.native_handle();
             int udp_fd = udp_socket.native_handle();
-            ev.data.fd = tcp_fd;  epoll_ctl(epfd, EPOLL_CTL_ADD, tcp_fd,  &ev);
-            ev.data.fd = udp_fd;  epoll_ctl(epfd, EPOLL_CTL_ADD, udp_fd,  &ev);
-            ev.data.fd = tundesc; epoll_ctl(epfd, EPOLL_CTL_ADD, tundesc, &ev);
 
-            struct epoll_event events[4];
+            // Thread 1 — TUN → encrypt → UDP; also owns the keepalive sender
+            std::thread enc_thread([&]() {
+                std::vector<uint8_t> enc_buf(IO_BUF_SIZE);
+                int efd = epoll_create1(EPOLL_CLOEXEC);
+                struct epoll_event ev{};
+                ev.events = EPOLLIN;
+                ev.data.fd = tundesc;
+                epoll_ctl(efd, EPOLL_CTL_ADD, tundesc, &ev);
+                struct epoll_event evs[2];
+                auto last_send = std::chrono::steady_clock::now();
+
+                while (io_running.load(std::memory_order_relaxed))
+                {
+                    int n = epoll_wait(efd, evs, 2, 100);
+                    if (n > 0)
+                    {
+                        std::shared_lock lock(keys_mutex);
+                        bool sent = false;
+                        while (E_N_C_R(enc_ctx, udp_socket, server_udp_ep, key_encrypt, tundesc, enc_buf.data()))
+                            sent = true;
+                        if (sent)
+                            last_send = std::chrono::steady_clock::now();
+                    }
+                    else if (n == 0)
+                    {
+                        auto now = std::chrono::steady_clock::now();
+                        if (now - last_send > keepalive_interval)
+                        {
+                            boost::system::error_code ka_ec;
+                            udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_server), server_udp_ep, 0, ka_ec);
+                            last_send = now;
+                        }
+                    }
+                }
+                close(efd);
+            });
+
+            // Thread 2 — UDP → decrypt → TUN
+            std::thread dec_thread([&]() {
+                std::vector<uint8_t> dec_buf(IO_BUF_SIZE);
+                udp::endpoint recv_ep;
+                int efd = epoll_create1(EPOLL_CLOEXEC);
+                struct epoll_event ev{};
+                ev.events = EPOLLIN;
+                ev.data.fd = udp_fd;
+                epoll_ctl(efd, EPOLL_CTL_ADD, udp_fd, &ev);
+                struct epoll_event evs[2];
+
+                while (io_running.load(std::memory_order_relaxed))
+                {
+                    if (epoll_wait(efd, evs, 2, 100) > 0)
+                    {
+                        std::shared_lock lock(keys_mutex);
+                        while (D_E_C_R(dec_ctx, udp_socket, recv_ep, key_decrypt, tundesc, dec_buf.data())) {}
+                    }
+                }
+                close(efd);
+            });
+
+            // Main thread — TCP: client-initiated and server-initiated rekey
+            int tcp_efd = epoll_create1(EPOLL_CLOEXEC);
+            {
+                struct epoll_event ev{};
+                ev.events = EPOLLIN;
+                ev.data.fd = tcp_fd;
+                epoll_ctl(tcp_efd, EPOLL_CTL_ADD, tcp_fd, &ev);
+            }
+            struct epoll_event events[2];
             bool connection_shutdown_flag = false;
             char tcp_buf[1024];
 
             while (!connection_shutdown_flag)
             {
-                // 100ms timeout: check rekey flag and keepalive timer
-                int nev = epoll_wait(epfd, events, 4, 100);
-
-                if (nev < 0)
-                {
-                    perror("epoll_wait");
-                    break;
-                }
-
+                // Check 1-hour rekey timer before blocking in epoll
                 if (client_rekey_flag.load())
                 {
                     std::cout << "Periodic rekey triggered by client timer.\n";
                     tcp_socket.non_blocking(false, ec);
                     boost::asio::write(tcp_socket, boost::asio::buffer("REKEY_CLIENT_INITIATED"));
-                    std::cout << "Client-initiated rekey sent\n";
                     client_rekey_flag.store(false);
-
-                    std::string qkd_key_buffer;
-                    if (!qkd_ip.empty())
-                        qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
-
-                    sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
-                    tcp_socket.non_blocking(true, ec);
-
-                    if (sec_key.empty())
                     {
-                        std::cerr << "Client-initiated rekey failed, closing connection.\n";
-                        connection_shutdown_flag = true;
-                        continue;
+                        std::unique_lock lock(keys_mutex);
+                        std::string qkd_key_buffer;
+                        if (!qkd_ip.empty())
+                            qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
+                        sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
+                        if (!sec_key.empty())
+                        {
+                            key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
+                            key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
+                            std::cout << "Client-initiated rekey completed\n";
+                        }
+                        else
+                        {
+                            std::cerr << "Client-initiated rekey failed, closing connection.\n";
+                            connection_shutdown_flag = true;
+                        }
                     }
-                    key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
-                    key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
-                    std::cout << "Client-initiated rekey completed\n";
+                    tcp_socket.non_blocking(true, ec);
+                    continue;
                 }
 
-                for (int i = 0; i < nev && !connection_shutdown_flag; i++)
+                if (epoll_wait(tcp_efd, events, 2, 100) <= 0)
+                    continue;
+
+                size_t len = tcp_socket.read_some(boost::asio::buffer(tcp_buf), ec);
+                if (!ec && len > 0)
                 {
-                    int fd = events[i].data.fd;
-
-                    if (fd == tcp_fd)
+                    if (std::string(tcp_buf, len) == "REKEY_SERVER_INITIATED")
                     {
-                        size_t len = tcp_socket.read_some(boost::asio::buffer(tcp_buf), ec);
-                        if (!ec && len > 0)
+                        tcp_socket.non_blocking(false, ec);
                         {
-                            if (std::string(tcp_buf, len) == "REKEY_SERVER_INITIATED")
+                            std::unique_lock lock(keys_mutex);
+                            std::string qkd_key_buffer;
+                            if (!qkd_ip.empty())
+                                qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
+                            sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
+                            if (!sec_key.empty())
                             {
-                                tcp_socket.non_blocking(false, ec);
-                                std::string qkd_key_buffer;
-                                if (!qkd_ip.empty())
-                                    qkd_key_buffer = get_qkdkey(qkd_ip, tcp_socket);
-
-                                sec_key = rekey_cli(tcp_socket, qkd_ip, srv_ip, qkd_key_buffer, chosen_pqc_alg);
-                                tcp_socket.non_blocking(true, ec);
-
-                                if (sec_key.empty())
-                                {
-                                    std::cerr << "Server-initiated rekey failed, closing connection.\n";
-                                    connection_shutdown_flag = true;
-                                    continue;
-                                }
                                 key_encrypt.assign(sec_key.begin(), sec_key.begin() + AES_GCM_KEY_LEN);
                                 key_decrypt.assign(sec_key.begin() + AES_GCM_KEY_LEN, sec_key.end());
                                 std::cout << "Server-initiated rekey completed\n";
                             }
+                            else
+                            {
+                                std::cerr << "Server-initiated rekey failed, closing connection.\n";
+                                connection_shutdown_flag = true;
+                            }
                         }
-                        else if (ec != boost::asio::error::would_block)
-                        {
-                            std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
-                            connection_shutdown_flag = true;
-                        }
-                    }
-                    else if (fd == tundesc)
-                    {
-                        if (E_N_C_R(enc_ctx, udp_socket, server_udp_ep, key_encrypt, tundesc, enc_buf.data()))
-                        {
-                            last_udp_send_time = std::chrono::steady_clock::now();
-                            while (E_N_C_R(enc_ctx, udp_socket, server_udp_ep, key_encrypt, tundesc, enc_buf.data())) {}
-                        }
-                    }
-                    else if (fd == udp_fd)
-                    {
-                        while (D_E_C_R(dec_ctx, udp_socket, server_udp_ep, key_decrypt, tundesc, dec_buf.data())) {}
+                        tcp_socket.non_blocking(true, ec);
                     }
                 }
-
-                // Keepalive: send if no data sent for keepalive_interval
-                if (nev == 0)
+                else if (ec != boost::asio::error::would_block)
                 {
-                    auto now = std::chrono::steady_clock::now();
-                    if (now - last_udp_send_time > keepalive_interval)
-                    {
-                        udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_server), server_udp_ep);
-                        last_udp_send_time = now;
-                    }
+                    std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
+                    connection_shutdown_flag = true;
                 }
             }
-            close(epfd);
+
+            io_running.store(false);
+            enc_thread.join();
+            dec_thread.join();
+            close(tcp_efd);
 
             std::cout << "Connection closing. Cleaning up resources.\n";
             tcp_socket.close();
