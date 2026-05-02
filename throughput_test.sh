@@ -59,21 +59,21 @@ for mtu in "${MTUS[@]}"; do
             
             if [ "$proto" == "TCP" ]; then
                 # Run TCP test using -M to set Maximum Segment Size
-                RESULT=$(taskset -c 0-$CORE_MASK iperf3 -c $SERVER_IP -t $TEST_DURATION -P $cores -M $MSS -J 2>/dev/null)
+                RESULT=$(taskset -c 0-$CORE_MASK iperf3 -c $SERVER_IP -t $TEST_DURATION -P $cores -M $MSS -J 2>/dev/null || echo '{"error":"iperf3 command failed"}')
                 
                 # Extract results using jq
-                THROUGHPUT=$(echo "$RESULT" | jq -r '.end.sum_received.bits_per_second / 1000000 | // "ERROR"')
+                THROUGHPUT=$(echo "$RESULT" | jq -r 'if .end.sum_received.bits_per_second then .end.sum_received.bits_per_second / 1000000 else "ERROR" end')
                 JITTER="N/A"
                 LOSS="N/A"
                 
             else
                 # Run UDP test using -l to set payload length
-                RESULT=$(taskset -c 0-$CORE_MASK iperf3 -c $SERVER_IP -u -b 0 -t $TEST_DURATION -P $cores -l $UDP_LEN -J 2>/dev/null)
+                RESULT=$(taskset -c 0-$CORE_MASK iperf3 -c $SERVER_IP -u -b 0 -t $TEST_DURATION -P $cores -l $UDP_LEN -J 2>/dev/null || echo '{"error":"iperf3 command failed"}')
                 
                 # Extract results using jq
-                THROUGHPUT=$(echo "$RESULT" | jq -r '.end.sum.bits_per_second / 1000000 | // "ERROR"')
-                JITTER=$(echo "$RESULT" | jq -r '.end.sum.jitter_ms | // "ERROR"')
-                LOSS=$(echo "$RESULT" | jq -r '.end.sum.lost_percent | // "ERROR"')
+                THROUGHPUT=$(echo "$RESULT" | jq -r 'if .end.sum.bits_per_second then .end.sum.bits_per_second / 1000000 else "ERROR" end')
+                JITTER=$(echo "$RESULT" | jq -r 'if .end.sum.jitter_ms != null then .end.sum.jitter_ms else "ERROR" end')
+                LOSS=$(echo "$RESULT" | jq -r 'if .end.sum.lost_percent != null then .end.sum.lost_percent else "ERROR" end')
             fi
             
             # Format numbers to 2 decimal places if valid
