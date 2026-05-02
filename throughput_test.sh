@@ -71,7 +71,10 @@ for mtu in "${MTUS[@]}"; do
                 RESULT=$(taskset -c 0-$CORE_MASK iperf3 -c $SERVER_IP -u -b 0 -t $TEST_DURATION -P $cores -l $UDP_LEN -J 2>/dev/null || echo '{"error":"iperf3 command failed"}')
                 
                 # Extract results using jq
-                THROUGHPUT=$(echo "$RESULT" | jq -r 'if .end.sum.bits_per_second then .end.sum.bits_per_second / 1000000 else "ERROR" end')
+                # For UDP, the client JSON reports the SENDER's bitrate in .end.sum.bits_per_second.
+                # The server's console shows the RECEIVER's bitrate. To align with the server's view,
+                # we must calculate the receiver's bitrate from the number of packets received.
+                THROUGHPUT=$(echo "$RESULT" | jq --arg udp_len "$UDP_LEN" -r 'if .end.sum.packets != null and .end.sum.seconds > 0 then (.end.sum.packets * ($udp_len|tonumber) * 8) / .end.sum.seconds / 1000000 else "ERROR" end')
                 JITTER=$(echo "$RESULT" | jq -r 'if .end.sum.jitter_ms != null then .end.sum.jitter_ms else "ERROR" end')
                 LOSS=$(echo "$RESULT" | jq -r 'if .end.sum.lost_percent != null then .end.sum.lost_percent else "ERROR" end')
             fi
