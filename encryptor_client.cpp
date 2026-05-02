@@ -30,6 +30,7 @@
 #include <openssl/core_names.h>
 #include <openssl/param_build.h>
 #include <openssl/hmac.h>
+#include <array>
 #include <span>
 
 using boost::asio::ip::tcp;
@@ -77,9 +78,12 @@ string qkd_parameter;
 
 void send_framed_message(tcp::socket &socket, const std::string &msg)
 {
-    uint32_t msg_len = htonl(msg.length());
-    boost::asio::write(socket, boost::asio::buffer(&msg_len, sizeof(msg_len)));
-    boost::asio::write(socket, boost::asio::buffer(msg));
+    uint32_t msg_len = htonl(static_cast<uint32_t>(msg.length()));
+    std::array<boost::asio::const_buffer, 2> bufs = {
+        boost::asio::buffer(&msg_len, sizeof(msg_len)),
+        boost::asio::buffer(msg)
+    };
+    boost::asio::write(socket, bufs);
 }
 
 std::string receive_framed_message(tcp::socket &socket)
@@ -275,19 +279,12 @@ int tun_open()
 
 string data_recieve(udp::socket &socket, udp::endpoint &remote_endpoint)
 {
-
-    char buffer[MAXLINE] = {0};
+    char buffer[MAXLINE];
     boost::system::error_code error;
     size_t n = socket.receive_from(boost::asio::buffer(buffer), remote_endpoint, 0, error);
-
     if (error && error != boost::asio::error::message_size)
-    {
         return "";
-    }
-
-    string recieved(buffer, n);
-
-    return recieved;
+    return string(buffer, n);
 }
 
 const std::string keepalive_msg_from_server = "KEEPALIVE_S";
@@ -299,23 +296,18 @@ bool is_keepalive_from_server(const std::string &msg)
 
 string read_tun(int tundesc)
 {
-
-    char buf[MAXLINE - 60] = {0};
+    char buf[MAXLINE - 60];
     int nbytes = read(tundesc, buf, sizeof(buf));
-    if (nbytes == -1)
-    {
+    if (nbytes <= 0)
         return "";
-    }
-    string data(buf, nbytes);
-
-    return data;
+    return string(buf, nbytes);
 }
 
 /* Virtual interface data write.
    Data will appear as if it arrived at
    virtual interface and can be routed further */
 
-void write_tun(int tundesc, string message)
+void write_tun(int tundesc, const string &message)
 {
     write(tundesc, message.data(), message.length());
 }
@@ -325,151 +317,108 @@ void send_encrypted(udp::socket &socket, udp::endpoint &remote_endpoint, const s
     socket.send_to(boost::asio::buffer(cipher), remote_endpoint);
 }
 
-string encrypt_data(const std::vector<unsigned char> &key, const string &plaintext)
+string encrypt_data(EVP_CIPHER_CTX *ctx, const std::vector<unsigned char> &key, const string &plaintext)
 {
-    EVP_CIPHER_CTX *ctx;
-    int len;
-    int ciphertext_len;
-    std::vector<unsigned char> iv(AES_GCM_IV_LEN);
-    std::vector<unsigned char> ciphertext(plaintext.length());
-    std::vector<unsigned char> tag(TAG_SIZE);
+    // Single pre-allocated output: [IV(12)][ciphertext(N)][tag(16)]
+    string result(AES_GCM_IV_LEN + plaintext.length() + TAG_SIZE, '\0');
+    unsigned char *const buf     = reinterpret_cast<unsigned char *>(result.data());
+    unsigned char *const iv_ptr  = buf;
+    unsigned char *const ct_ptr  = buf + AES_GCM_IV_LEN;
+    unsigned char *const tag_ptr = buf + AES_GCM_IV_LEN + plaintext.length();
 
-    if (1 != RAND_bytes(iv.data(), iv.size()))
-    {
-        std::cerr << "Error: Failed to generate IV." << std::endl;
+    if (RAND_bytes(iv_ptr, AES_GCM_IV_LEN) != 1)
         return "";
-    }
-
-    if (!(ctx = EVP_CIPHER_CTX_new()))
-        return "";
-    if (1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL))
-        return "";
-    if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, iv.size(), NULL))
-        return "";
-    if (1 != EVP_EncryptInit_ex(ctx, NULL, NULL, key.data(), iv.data()))
+    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1 ||
+        EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, AES_GCM_IV_LEN, NULL) != 1 ||
+        EVP_EncryptInit_ex(ctx, NULL, NULL, key.data(), iv_ptr) != 1)
         return "";
 
-    if (1 != EVP_EncryptUpdate(ctx, ciphertext.data(), &len, (const unsigned char *)plaintext.c_str(), plaintext.length()))
-    {
-        EVP_CIPHER_CTX_free(ctx);
+    int len = 0, ct_len = 0;
+    if (EVP_EncryptUpdate(ctx, ct_ptr, &len,
+                          reinterpret_cast<const unsigned char *>(plaintext.data()),
+                          static_cast<int>(plaintext.length())) != 1)
         return "";
-    }
-    ciphertext_len = len;
+    ct_len = len;
 
-    if (1 != EVP_EncryptFinal_ex(ctx, ciphertext.data() + len, &len))
-    {
-        EVP_CIPHER_CTX_free(ctx);
+    if (EVP_EncryptFinal_ex(ctx, ct_ptr + ct_len, &len) != 1)
         return "";
-    }
-    ciphertext_len += len;
-    ciphertext.resize(ciphertext_len);
+    ct_len += len;
 
-    if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, TAG_SIZE, tag.data()))
-    {
-        EVP_CIPHER_CTX_free(ctx);
+    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, TAG_SIZE, tag_ptr) != 1)
         return "";
-    }
 
-    EVP_CIPHER_CTX_free(ctx);
-
-
-    string result(reinterpret_cast<const char *>(iv.data()), iv.size());
-    result.append(reinterpret_cast<const char *>(ciphertext.data()), ciphertext.size());
-    result.append(reinterpret_cast<const char *>(tag.data()), tag.size());
-
+    result.resize(AES_GCM_IV_LEN + ct_len + TAG_SIZE);
     return result;
 }
 
-string decrypt_data(const std::vector<unsigned char> &key, const string &cipher_with_iv_tag)
+string decrypt_data(EVP_CIPHER_CTX *ctx, const std::vector<unsigned char> &key, const string &cipher_with_iv_tag)
 {
     if (cipher_with_iv_tag.length() < AES_GCM_IV_LEN + TAG_SIZE)
-    {
-        return ""; 
-    }
+        return "";
 
-    EVP_CIPHER_CTX *ctx;
-    int len;
-    int plaintext_len;
-
-    const unsigned char *iv = (const unsigned char *)cipher_with_iv_tag.data();
+    const unsigned char *iv         = reinterpret_cast<const unsigned char *>(cipher_with_iv_tag.data());
     const unsigned char *ciphertext = iv + AES_GCM_IV_LEN;
-    size_t ciphertext_len_val = cipher_with_iv_tag.length() - AES_GCM_IV_LEN - TAG_SIZE;
-    const unsigned char *tag = ciphertext + ciphertext_len_val;
-    std::vector<unsigned char> plaintext(ciphertext_len_val);
+    const size_t ct_len             = cipher_with_iv_tag.length() - AES_GCM_IV_LEN - TAG_SIZE;
+    const unsigned char *tag        = ciphertext + ct_len;
 
-    if (!(ctx = EVP_CIPHER_CTX_new()))
-        return "";
-    if (!EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL))
-        return "";
-    if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, AES_GCM_IV_LEN, NULL))
-        return "";
-    if (!EVP_DecryptInit_ex(ctx, NULL, NULL, key.data(), iv))
-        return "";
-    if (!EVP_DecryptUpdate(ctx, plaintext.data(), &len, ciphertext, ciphertext_len_val))
-        return "";
-    plaintext_len = len;
+    // Write plaintext directly into a pre-sized string
+    string plaintext(ct_len, '\0');
+    unsigned char *pt_ptr = reinterpret_cast<unsigned char *>(plaintext.data());
 
-    if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, TAG_SIZE, (void *)tag))
+    if (EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1 ||
+        EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, AES_GCM_IV_LEN, NULL) != 1 ||
+        EVP_DecryptInit_ex(ctx, NULL, NULL, key.data(), iv) != 1)
         return "";
 
-    int ret = EVP_DecryptFinal_ex(ctx, plaintext.data() + len, &len);
-    EVP_CIPHER_CTX_free(ctx);
+    int len = 0;
+    if (EVP_DecryptUpdate(ctx, pt_ptr, &len, ciphertext, static_cast<int>(ct_len)) != 1)
+        return "";
+    int pt_len = len;
 
+    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, TAG_SIZE,
+                             const_cast<unsigned char *>(tag)) != 1)
+        return "";
+
+    int ret = EVP_DecryptFinal_ex(ctx, pt_ptr + pt_len, &len);
     if (ret > 0)
     {
-        plaintext_len += len;
-        plaintext.resize(plaintext_len);
-        return string(reinterpret_cast<const char *>(plaintext.data()), plaintext.size());
+        pt_len += len;
+        plaintext.resize(pt_len);
+        return plaintext;
     }
-    else
-    {
-        return ""; 
-    }
+    return "";
 }
 
 /*
    Receives, decrypts, and writes data to the TUN interface.
-   Returns false if there are no more data available on socket.
+   Returns false when no more data is available on the socket.
 */
-bool D_E_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc)
+bool D_E_C_R(EVP_CIPHER_CTX *dec_ctx, udp::socket &socket, udp::endpoint &remote_endpoint,
+             const std::vector<unsigned char> &key, int tundesc)
 {
-    string data;
     string encrypted_data = data_recieve(socket, remote_endpoint);
     if (is_keepalive_from_server(encrypted_data))
-    {
-        // It's just a keep-alive from the server, ignore it and report no real data.
         return false;
-    }
-
     if (encrypted_data.length() < AES_GCM_IV_LEN + TAG_SIZE + 1)
-    {
         return false;
-    }
-
-    data = decrypt_data(key, encrypted_data);
-    if (data.empty()) {
-        // Decryption failed or empty packet, don't write to TUN
+    string data = decrypt_data(dec_ctx, key, encrypted_data);
+    if (data.empty())
         return false;
-    }
-
     write_tun(tundesc, data);
     return true;
 }
 
 /*
    Reads from the TUN interface, encrypts, and sends data.
-   Returns false if there are no more data available on virtual interface.
+   Returns false when no more data is available on the virtual interface.
 */
-bool E_N_C_R(udp::socket &socket, udp::endpoint &remote_endpoint, const std::vector<unsigned char> &key, int tundesc)
+bool E_N_C_R(EVP_CIPHER_CTX *enc_ctx, udp::socket &socket, udp::endpoint &remote_endpoint,
+             const std::vector<unsigned char> &key, int tundesc)
 {
     string data = read_tun(tundesc);
-    if (data.length() == 0)
-    {
+    if (data.empty())
         return false;
-    }
-
-    string encrypted_data = encrypt_data(key, data);
-
+    string encrypted_data = encrypt_data(enc_ctx, key, data);
     send_encrypted(socket, remote_endpoint, encrypted_data);
     return true;
 }
@@ -1365,6 +1314,17 @@ int main(int argc, char *argv[])
     }
 
 
+    EVP_CIPHER_CTX *enc_ctx = EVP_CIPHER_CTX_new();
+    EVP_CIPHER_CTX *dec_ctx = EVP_CIPHER_CTX_new();
+    if (!enc_ctx || !dec_ctx)
+    {
+        std::cerr << "Failed to allocate cipher contexts\n";
+        EVP_CIPHER_CTX_free(enc_ctx);
+        EVP_CIPHER_CTX_free(dec_ctx);
+        close(tundesc);
+        return 1;
+    }
+
     std::atomic<bool> app_shutdown_flag{false};
     std::atomic<bool> client_rekey_flag{false};
 
@@ -1384,6 +1344,9 @@ int main(int argc, char *argv[])
             tcp::resolver resolver(io_context);
             boost::asio::connect(tcp_socket, resolver.resolve(srv_ip, std::to_string(KEYPORT)));
             std::cout << "Connected to server\n";
+
+            // Disable Nagle's algorithm for responsive key exchange over TCP
+            tcp_socket.set_option(tcp::no_delay(true));
 
             char ready_buf[5] = {0};
             boost::asio::read(tcp_socket, boost::asio::buffer(ready_buf, 5));
@@ -1532,19 +1495,20 @@ int main(int argc, char *argv[])
                     }
                 }
 
-              
+
                 if (FD_ISSET(tundesc, &fds))
                 {
-                    if (E_N_C_R(udp_socket, server_udp_ep, key_encrypt, tundesc))
+                    if (E_N_C_R(enc_ctx, udp_socket, server_udp_ep, key_encrypt, tundesc))
                     {
                         last_udp_send_time = std::chrono::steady_clock::now();
+                        while (E_N_C_R(enc_ctx, udp_socket, server_udp_ep, key_encrypt, tundesc)) {}
                     }
                 }
 
-               
+
                 if (FD_ISSET(udp_native, &fds))
                 {
-                    D_E_C_R(udp_socket, server_udp_ep, key_decrypt, tundesc);
+                    while (D_E_C_R(dec_ctx, udp_socket, server_udp_ep, key_decrypt, tundesc)) {}
                 }
 
                
@@ -1574,6 +1538,9 @@ int main(int argc, char *argv[])
     {
         close(tundesc);
     }
+
+    EVP_CIPHER_CTX_free(enc_ctx);
+    EVP_CIPHER_CTX_free(dec_ctx);
 
     app_shutdown_flag.store(true);
     if (rekey_thread.joinable())
