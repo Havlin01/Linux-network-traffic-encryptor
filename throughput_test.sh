@@ -72,9 +72,9 @@ for mtu in "${MTUS[@]}"; do
                 
                 # Extract results using jq
                 # For UDP, the client JSON reports the SENDER's bitrate in .end.sum.bits_per_second.
-                # The server's console shows the RECEIVER's bitrate. To align with the server's view,
-                # we must calculate the receiver's bitrate from the number of packets received.
-                THROUGHPUT=$(echo "$RESULT" | jq --arg udp_len "$UDP_LEN" -r 'if .end.sum.packets != null and .end.sum.seconds > 0 then (.end.sum.packets * ($udp_len|tonumber) * 8) / .end.sum.seconds / 1000000 else "ERROR" end')
+                # To align with the server's view, we must use the `sum_received` object, which contains
+                # the final statistics from the receiver's perspective.
+                THROUGHPUT=$(echo "$RESULT" | jq -r 'if .end.sum_received.bits_per_second then .end.sum_received.bits_per_second / 1000000 else "ERROR" end')
                 JITTER=$(echo "$RESULT" | jq -r 'if .end.sum.jitter_ms != null then .end.sum.jitter_ms else "ERROR" end')
                 LOSS=$(echo "$RESULT" | jq -r 'if .end.sum.lost_percent != null then .end.sum.lost_percent else "ERROR" end')
             fi
