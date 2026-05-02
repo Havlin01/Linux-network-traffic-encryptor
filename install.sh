@@ -33,6 +33,9 @@ Route_IP=$1
 sudo ip link delete tun0
 sudo ip tuntap add name tun0 mode tun
 sudo ip link set tun0 up
+# MTU = underlying 1500 - 20 (IP) - 8 (UDP) - 12 (AES-GCM IV) - 16 (GCM tag) = 1444
+# Without this, every encrypted packet exceeds the network MTU and gets fragmented.
+sudo ip link set tun0 mtu 1444
 sudo ip addr add 192.168.1.1 peer 192.168.1.2 dev tun0
 
 echo "1" | sudo tee /proc/sys/net/ipv4/ip_forward

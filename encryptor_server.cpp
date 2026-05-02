@@ -29,6 +29,7 @@
 #include <vector>
 #include <map>
 #include <array>
+#include <sys/epoll.h>
 #include <openssl/rand.h>
 #include <openssl/hmac.h>
 #include <openssl/objects.h>
@@ -409,36 +410,92 @@ string decrypt_data(EVP_CIPHER_CTX *ctx, const std::vector<unsigned char> &key, 
 }
 
 /*
-   Receives, decrypts, and writes data to the TUN interface.
-   Returns false when no more data is available on the socket.
+   Reads from TUN, encrypts in-place, and sends over UDP.
+   buf must be at least AES_GCM_IV_LEN + MAXLINE + TAG_SIZE bytes.
+   Returns false when the TUN has no more data (EAGAIN).
 */
-bool D_E_C_R(EVP_CIPHER_CTX *dec_ctx, udp::socket &socket, udp::endpoint &remote_endpoint,
-             const std::vector<unsigned char> &key, int tundesc)
+bool E_N_C_R(EVP_CIPHER_CTX *enc_ctx, udp::socket &socket, udp::endpoint &remote_endpoint,
+             const std::vector<unsigned char> &key, int tundesc, uint8_t *buf)
 {
-    string encrypted_data = data_recieve(socket, remote_endpoint);
-    if (is_keepalive_from_client(encrypted_data))
+    // Layout: [IV(12)] [plaintext→ciphertext(n)] [tag(16)]
+    uint8_t *iv  = buf;
+    uint8_t *msg = buf + AES_GCM_IV_LEN;
+
+    int n = ::read(tundesc, msg, MAXLINE - 60);
+    if (n <= 0)
         return false;
-    if (encrypted_data.length() < AES_GCM_IV_LEN + TAG_SIZE + 1)
+
+    if (RAND_bytes(iv, AES_GCM_IV_LEN) != 1)
         return false;
-    string data = decrypt_data(dec_ctx, key, encrypted_data);
-    if (data.empty())
+
+    if (EVP_EncryptInit_ex(enc_ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1 ||
+        EVP_CIPHER_CTX_ctrl(enc_ctx, EVP_CTRL_GCM_SET_IVLEN, AES_GCM_IV_LEN, NULL) != 1 ||
+        EVP_EncryptInit_ex(enc_ctx, NULL, NULL, key.data(), iv) != 1)
         return false;
-    write_tun(tundesc, data);
+
+    int len = 0, ct_len = 0;
+    if (EVP_EncryptUpdate(enc_ctx, msg, &len, msg, n) != 1)  // in-place
+        return false;
+    ct_len = len;
+    if (EVP_EncryptFinal_ex(enc_ctx, msg + ct_len, &len) != 1)
+        return false;
+    ct_len += len;
+
+    uint8_t *tag = msg + ct_len;
+    if (EVP_CIPHER_CTX_ctrl(enc_ctx, EVP_CTRL_GCM_GET_TAG, TAG_SIZE, tag) != 1)
+        return false;
+
+    boost::system::error_code send_ec;
+    socket.send_to(boost::asio::buffer(buf, AES_GCM_IV_LEN + ct_len + TAG_SIZE),
+                   remote_endpoint, 0, send_ec);
     return true;
 }
 
 /*
-   Reads from the TUN interface, encrypts, and sends data.
-   Returns false when no more data is available on the virtual interface.
+   Receives from UDP, decrypts in-place, and writes to TUN.
+   buf must be at least MAXLINE bytes.
+   Returns false when the socket has no more data (EAGAIN).
 */
-bool E_N_C_R(EVP_CIPHER_CTX *enc_ctx, udp::socket &socket, udp::endpoint &remote_endpoint,
-             const std::vector<unsigned char> &key, int tundesc)
+bool D_E_C_R(EVP_CIPHER_CTX *dec_ctx, udp::socket &socket, udp::endpoint &remote_endpoint,
+             const std::vector<unsigned char> &key, int tundesc, uint8_t *buf)
 {
-    string data = read_tun(tundesc);
-    if (data.empty())
+    boost::system::error_code error;
+    size_t n = socket.receive_from(boost::asio::buffer(buf, MAXLINE), remote_endpoint, 0, error);
+    if (error && error != boost::asio::error::message_size)
         return false;
-    string encrypted_data = encrypt_data(enc_ctx, key, data);
-    send_encrypted(socket, remote_endpoint, encrypted_data);
+    if (n == 0)
+        return false;
+
+    if (n == keepalive_msg_from_client.size() &&
+        memcmp(buf, keepalive_msg_from_client.data(), n) == 0)
+        return false;
+
+    if (n < static_cast<size_t>(AES_GCM_IV_LEN + TAG_SIZE + 1))
+        return false;
+
+    uint8_t *iv    = buf;
+    uint8_t *ct    = buf + AES_GCM_IV_LEN;
+    size_t   ct_len = n - AES_GCM_IV_LEN - TAG_SIZE;
+    uint8_t *tag   = ct + ct_len;
+
+    if (EVP_DecryptInit_ex(dec_ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1 ||
+        EVP_CIPHER_CTX_ctrl(dec_ctx, EVP_CTRL_GCM_SET_IVLEN, AES_GCM_IV_LEN, NULL) != 1 ||
+        EVP_DecryptInit_ex(dec_ctx, NULL, NULL, key.data(), iv) != 1)
+        return false;
+
+    int len = 0;
+    if (EVP_DecryptUpdate(dec_ctx, ct, &len, ct, static_cast<int>(ct_len)) != 1)  // in-place
+        return false;
+    int pt_len = len;
+
+    if (EVP_CIPHER_CTX_ctrl(dec_ctx, EVP_CTRL_GCM_SET_TAG, TAG_SIZE, tag) != 1)
+        return false;
+
+    if (EVP_DecryptFinal_ex(dec_ctx, ct + pt_len, &len) <= 0)
+        return false;
+    pt_len += len;
+
+    ::write(tundesc, ct, pt_len);
     return true;
 }
 
@@ -1440,86 +1497,84 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         std::vector<unsigned char> key_decrypt(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
         std::vector<unsigned char> key_encrypt(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
 
-        const std::chrono::seconds keepalive_interval(15);
-        auto last_udp_send_time = std::chrono::steady_clock::now();
-        const std::string keepalive_msg_to_client = "KEEPALIVE_S";
+        // Pre-allocated I/O buffers — no heap allocation per packet
+        constexpr size_t IO_BUF_SIZE = AES_GCM_IV_LEN + MAXLINE + TAG_SIZE;
+        std::vector<uint8_t> enc_buf(IO_BUF_SIZE);
+        std::vector<uint8_t> dec_buf(IO_BUF_SIZE);
 
-        while (true)
+        // Larger kernel socket buffers to absorb traffic bursts
+        udp_socket.set_option(boost::asio::socket_base::receive_buffer_size(4 * 1024 * 1024), ec);
+        udp_socket.set_option(boost::asio::socket_base::send_buffer_size(4 * 1024 * 1024), ec);
+
+        int epfd = epoll_create1(EPOLL_CLOEXEC);
+        if (epfd < 0) { perror("epoll_create1"); return; }
+
+        struct epoll_event ev{};
+        ev.events = EPOLLIN;
+        int tcp_fd = tcp_socket.native_handle();
+        int udp_fd = udp_socket.native_handle();
+        ev.data.fd = tcp_fd;  epoll_ctl(epfd, EPOLL_CTL_ADD, tcp_fd,  &ev);
+        ev.data.fd = udp_fd;  epoll_ctl(epfd, EPOLL_CTL_ADD, udp_fd,  &ev);
+        ev.data.fd = tundesc; epoll_ctl(epfd, EPOLL_CTL_ADD, tundesc, &ev);
+
+        struct epoll_event events[4];
+        bool running = true;
+
+        while (running)
         {
+            int nev = epoll_wait(epfd, events, 4, 1000);
+            if (nev < 0) { perror("epoll_wait"); break; }
 
-            fd_set fds;
-            FD_ZERO(&fds);
-
-            int tcp_native = tcp_socket.native_handle();
-            FD_SET(tcp_native, &fds);
-
-            int udp_native = udp_socket.native_handle();
-            FD_SET(udp_native, &fds);
-
-            FD_SET(tundesc, &fds);
-
-            int max_fd = std::max({tundesc, tcp_native, udp_native});
-
-            
-            struct timeval tv = {1, 0};
-            int ret = select(max_fd + 1, &fds, NULL, NULL, &tv);
-
-            if (ret < 0)
+            for (int i = 0; i < nev && running; i++)
             {
-                perror("select() error");
-                break;
-            }
+                int fd = events[i].data.fd;
 
-
-            
-            if (FD_ISSET(tcp_native, &fds))
-            {
-                char bufferTCP[4096] = {0};
-                size_t status = tcp_socket.read_some(boost::asio::buffer(bufferTCP), ec);
-
-                if (!ec && status > 0)
+                if (fd == tcp_fd)
                 {
-                    std::string msg(bufferTCP, status);
-                    if (msg.starts_with("REKEY_CLIENT_INITIATED"))
-                    {
-                        std::cout << "Client initiated rekey" << std::endl;
-                        tcp_socket.non_blocking(false, ec); 
-                        std::vector<unsigned char> new_key_material = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
-                        tcp_socket.non_blocking(true, ec); 
+                    char bufferTCP[4096] = {0};
+                    size_t status = tcp_socket.read_some(boost::asio::buffer(bufferTCP), ec);
 
-                        if (new_key_material.size() >= AES_GCM_KEY_LEN * 2)
+                    if (!ec && status > 0)
+                    {
+                        std::string msg(bufferTCP, status);
+                        if (msg.starts_with("REKEY_CLIENT_INITIATED"))
                         {
-                            aes_keys = new_key_material;
-                            key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
-                            key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
-                            std::cout << "Rekey completed & keys updated" << std::endl;
-                        }
-                        else
-                        {
-                            std::cerr << "Rekey failed, closing connection.\n";
-                            break;
+                            std::cout << "Client initiated rekey" << std::endl;
+                            tcp_socket.non_blocking(false, ec);
+                            std::vector<unsigned char> new_key_material = rekey_srv(tcp_socket, qkd_ip, chosen_pqc_alg);
+                            tcp_socket.non_blocking(true, ec);
+
+                            if (new_key_material.size() >= AES_GCM_KEY_LEN * 2)
+                            {
+                                aes_keys = new_key_material;
+                                key_decrypt.assign(aes_keys.begin(), aes_keys.begin() + AES_GCM_KEY_LEN);
+                                key_encrypt.assign(aes_keys.begin() + AES_GCM_KEY_LEN, aes_keys.end());
+                                std::cout << "Rekey completed & keys updated" << std::endl;
+                            }
+                            else
+                            {
+                                std::cerr << "Rekey failed, closing connection.\n";
+                                running = false;
+                            }
                         }
                     }
+                    else if (ec != boost::asio::error::would_block)
+                    {
+                        std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
+                        running = false;
+                    }
                 }
-                else if (ec != boost::asio::error::would_block)
+                else if (fd == tundesc)
                 {
-                    std::cerr << "TCP connection error or closed: " << ec.message() << "\n";
-                    break;
+                    while (E_N_C_R(enc_ctx, udp_socket, client_udp_ep, key_encrypt, tundesc, enc_buf.data())) {}
                 }
-            }
-
-
-            if (FD_ISSET(tundesc, &fds))
-            {
-                while (E_N_C_R(enc_ctx, udp_socket, client_udp_ep, key_encrypt, tundesc)) {}
-            }
-
-
-            if (FD_ISSET(udp_native, &fds))
-            {
-                while (D_E_C_R(dec_ctx, udp_socket, client_udp_ep, key_decrypt, tundesc)) {}
+                else if (fd == udp_fd)
+                {
+                    while (D_E_C_R(dec_ctx, udp_socket, client_udp_ep, key_decrypt, tundesc, dec_buf.data())) {}
+                }
             }
         }
+        close(epfd);
         tcp_socket.close();
         udp_socket.close();
     }
