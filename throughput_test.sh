@@ -41,6 +41,9 @@ MTUS=(576 1300 1500 9000)
 PROTOCOLS=("TCP" "UDP")
 TEST_DURATION=30
 
+# Set a realistic upper limit for UDP to prevent 100% packet loss from buffer overflows.
+UDP_BANDWIDTH="1G" # Change to "10G" or your expected line rate.
+
 for mtu in "${MTUS[@]}"; do
     echo "------------------------------------------------------------"
     echo "Testing with Equivalent MTU of $mtu..."
@@ -68,7 +71,7 @@ for mtu in "${MTUS[@]}"; do
                 
             else
                 # Run UDP test using -l to set payload length
-                RESULT=$(taskset -c 0-$CORE_MASK iperf3 -c $SERVER_IP -u -b 0 -t $TEST_DURATION -P $cores -l $UDP_LEN -J 2>/dev/null || echo '{"error":"iperf3 command failed"}')
+                RESULT=$(taskset -c 0-$CORE_MASK iperf3 -c $SERVER_IP -u -b $UDP_BANDWIDTH -t $TEST_DURATION -P $cores -l $UDP_LEN -J 2>/dev/null || echo '{"error":"iperf3 command failed"}')
                 
                 # Extract results using jq
                 # For UDP, the client JSON reports the SENDER's bitrate in .end.sum.bits_per_second.
