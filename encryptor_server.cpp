@@ -1510,47 +1510,41 @@ void handle_client(boost::asio::io_context &io_context, tcp::socket tcp_socket, 
         int tcp_fd = tcp_socket.native_handle();
         int udp_fd = udp_socket.native_handle();
 
-        // Thread 1 — TUN → encrypt → UDP (runs on its own core)
+        // Thread 1 — TUN → encrypt → UDP
+        // Yield-polls instead of blocking in epoll: reduces per-packet latency from
+        // ~400 µs (VirtualBox interrupt delivery) to ~1 µs (next yield iteration).
         std::thread enc_thread([&]() {
             std::vector<uint8_t> enc_buf(IO_BUF_SIZE);
-            int efd = epoll_create1(EPOLL_CLOEXEC);
-            struct epoll_event ev{};
-            ev.events = EPOLLIN;
-            ev.data.fd = tundesc;
-            epoll_ctl(efd, EPOLL_CTL_ADD, tundesc, &ev);
-            struct epoll_event evs[2];
-
             while (io_running.load(std::memory_order_relaxed))
             {
-                if (epoll_wait(efd, evs, 2, 100) > 0)
+                bool did_work;
                 {
                     std::shared_lock lock(keys_mutex);
-                    while (E_N_C_R(enc_ctx, udp_socket, client_udp_ep, key_encrypt, tundesc, enc_buf.data())) {}
+                    did_work = false;
+                    while (E_N_C_R(enc_ctx, udp_socket, client_udp_ep, key_encrypt, tundesc, enc_buf.data()))
+                        did_work = true;
                 }
+                if (!did_work)
+                    std::this_thread::yield();
             }
-            close(efd);
         });
 
-        // Thread 2 — UDP → decrypt → TUN (runs on its own core)
+        // Thread 2 — UDP → decrypt → TUN
         std::thread dec_thread([&]() {
             std::vector<uint8_t> dec_buf(IO_BUF_SIZE);
-            udp::endpoint recv_ep;  // thread-local; avoids races with enc_thread on client_udp_ep
-            int efd = epoll_create1(EPOLL_CLOEXEC);
-            struct epoll_event ev{};
-            ev.events = EPOLLIN;
-            ev.data.fd = udp_fd;
-            epoll_ctl(efd, EPOLL_CTL_ADD, udp_fd, &ev);
-            struct epoll_event evs[2];
-
+            udp::endpoint recv_ep;
             while (io_running.load(std::memory_order_relaxed))
             {
-                if (epoll_wait(efd, evs, 2, 100) > 0)
+                bool did_work;
                 {
                     std::shared_lock lock(keys_mutex);
-                    while (D_E_C_R(dec_ctx, udp_socket, recv_ep, key_decrypt, tundesc, dec_buf.data())) {}
+                    did_work = false;
+                    while (D_E_C_R(dec_ctx, udp_socket, recv_ep, key_decrypt, tundesc, dec_buf.data()))
+                        did_work = true;
                 }
+                if (!did_work)
+                    std::this_thread::yield();
             }
-            close(efd);
         });
 
         // Main thread — TCP rekey only

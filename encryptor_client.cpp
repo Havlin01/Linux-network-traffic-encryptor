@@ -1459,28 +1459,20 @@ int main(int argc, char *argv[])
             // Thread 1 — TUN → encrypt → UDP; also owns the keepalive sender
             std::thread enc_thread([&]() {
                 std::vector<uint8_t> enc_buf(IO_BUF_SIZE);
-                int efd = epoll_create1(EPOLL_CLOEXEC);
-                struct epoll_event ev{};
-                ev.events = EPOLLIN;
-                ev.data.fd = tundesc;
-                epoll_ctl(efd, EPOLL_CTL_ADD, tundesc, &ev);
-                struct epoll_event evs[2];
                 auto last_send = std::chrono::steady_clock::now();
 
                 while (io_running.load(std::memory_order_relaxed))
                 {
-                    int n = epoll_wait(efd, evs, 2, 100);
-                    if (n > 0)
+                    bool did_work;
                     {
                         std::shared_lock lock(keys_mutex);
-                        bool sent = false;
+                        did_work = false;
                         while (E_N_C_R(enc_ctx, udp_socket, server_udp_ep, key_encrypt, tundesc, enc_buf.data()))
-                            sent = true;
-                        if (sent)
-                            last_send = std::chrono::steady_clock::now();
+                            did_work = true;
                     }
-                    else if (n == 0)
-                    {
+                    if (did_work) {
+                        last_send = std::chrono::steady_clock::now();
+                    } else {
                         auto now = std::chrono::steady_clock::now();
                         if (now - last_send > keepalive_interval)
                         {
@@ -1488,31 +1480,28 @@ int main(int argc, char *argv[])
                             udp_socket.send_to(boost::asio::buffer(keepalive_msg_to_server), server_udp_ep, 0, ka_ec);
                             last_send = now;
                         }
+                        std::this_thread::yield();
                     }
                 }
-                close(efd);
             });
 
             // Thread 2 — UDP → decrypt → TUN
             std::thread dec_thread([&]() {
                 std::vector<uint8_t> dec_buf(IO_BUF_SIZE);
                 udp::endpoint recv_ep;
-                int efd = epoll_create1(EPOLL_CLOEXEC);
-                struct epoll_event ev{};
-                ev.events = EPOLLIN;
-                ev.data.fd = udp_fd;
-                epoll_ctl(efd, EPOLL_CTL_ADD, udp_fd, &ev);
-                struct epoll_event evs[2];
 
                 while (io_running.load(std::memory_order_relaxed))
                 {
-                    if (epoll_wait(efd, evs, 2, 100) > 0)
+                    bool did_work;
                     {
                         std::shared_lock lock(keys_mutex);
-                        while (D_E_C_R(dec_ctx, udp_socket, recv_ep, key_decrypt, tundesc, dec_buf.data())) {}
+                        did_work = false;
+                        while (D_E_C_R(dec_ctx, udp_socket, recv_ep, key_decrypt, tundesc, dec_buf.data()))
+                            did_work = true;
                     }
+                    if (!did_work)
+                        std::this_thread::yield();
                 }
-                close(efd);
             });
 
             // Main thread — TCP: client-initiated and server-initiated rekey
