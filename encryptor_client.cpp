@@ -626,48 +626,6 @@ EVP_PKEY *create_pqc_pubkey_from_raw(const std::string &alg_name, const std::vec
     return pkey;
 }
 
-// Helper: List available OQS KEM algorithms
-void list_available_kem_algorithms()
-{
-    std::cout << "\nAvailable OQS KEM algorithms:\n";
-    int count = OQS_KEM_alg_count();
-    for (int i = 0; i < count; i++)
-    {
-        const char *alg = OQS_KEM_alg_identifier(i);
-        if (alg && OQS_KEM_alg_is_enabled(alg))
-        {
-            std::cout << "  - " << alg << "\n";
-        }
-    }
-    std::cout << "\n";
-}
-
-// Generate HQC-256 keypair using direct OQS API (runtime interface)
-std::pair<std::vector<uint8_t>, std::vector<uint8_t>> generate_pqc_keypair_hqc()
-{
-    OQS_KEM *kem = OQS_KEM_new("HQC-256");
-    if (kem == NULL)
-    {
-        std::cerr << "generate_pqc_keypair_hqc: OQS_KEM_new failed for HQC-256\n";
-        std::cerr << "HQC-256 may not be enabled in liboqs. ";
-        list_available_kem_algorithms();
-        return {{}, {}};
-    }
-
-    std::vector<uint8_t> pubkey(kem->length_public_key);
-    std::vector<uint8_t> privkey(kem->length_secret_key);
-
-    OQS_STATUS status = kem->keypair(pubkey.data(), privkey.data());
-    OQS_KEM_free(kem);
-    
-    if (status != OQS_SUCCESS)
-    {
-        std::cerr << "generate_pqc_keypair_hqc: keypair generation failed\n";
-        return {{}, {}};
-    }
-
-    return {pubkey, privkey};
-}
 
 struct PQCKeyMaterial
 {
@@ -689,9 +647,9 @@ struct PQC_Alg_Properties
     size_t ciphertext_len = 0;
 };
 
-PQC_Alg_Properties get_pqc_alg_properties(const std::string & /*alg_name_ignored*/)
+PQC_Alg_Properties get_pqc_alg_properties(const std::string &alg_name)
 {
-    const char *alg = "ML-KEM-768";
+    const char *alg = alg_name.c_str();
     PQC_Alg_Properties props{};
 
     EVP_KEM *kem = EVP_KEM_fetch(NULL, alg, NULL);
@@ -830,57 +788,6 @@ PQCKeyMaterial get_pqckey(tcp::socket &client_socket, const std::string &alg_nam
     return {shared_secret, ciphertext};
 }
 
-// HQC-256 key exchange: Perform encapsulation with server's public key
-PQCKeyMaterial get_pqckey_hqc(tcp::socket &client_socket)
-{
-    std::string server_pub_str = receive_framed_message(client_socket);
-    std::vector<uint8_t> server_pubkey(server_pub_str.begin(), server_pub_str.end());
-    
-    std::cout << "Client: received HQC-256 public key (len=" << server_pubkey.size() << ")\n";
-
-    OQS_KEM *kem = OQS_KEM_new("HQC-256");
-    if (kem == NULL)
-    {
-        std::cerr << "Error: OQS_KEM_new failed for HQC-256.\n";
-        return {};
-    }
-
-    if (server_pubkey.size() != kem->length_public_key)
-    {
-        std::cerr << "Error: Expected HQC-256 pubkey length " << kem->length_public_key 
-                  << " but got " << server_pubkey.size() << "\n";
-        OQS_KEM_free(kem);
-        return {};
-    }
-    std::cout << "Client DEBUG: received HQC-256 pubkey(hex) = " << to_hex_snippet(server_pubkey) << "\n";
-
-    std::vector<uint8_t> ciphertext(kem->length_ciphertext);
-    std::vector<uint8_t> shared_secret(kem->length_shared_secret);
-
-    OQS_STATUS status = kem->encaps(ciphertext.data(), shared_secret.data(), server_pubkey.data());
-    OQS_KEM_free(kem);
-    
-    if (status != OQS_SUCCESS)
-    {
-        std::cerr << "Error: HQC-256 encapsulation failed.\n";
-        return {};
-    }
-
-    std::cout << "Client DEBUG: HQC-256 shared secret(hex) = " << to_hex(shared_secret) << "\n";
-    std::cout << "Client DEBUG: HQC-256 ciphertext(hex) = " << to_hex_snippet(ciphertext) << "\n";
-
-    try
-    {
-        send_framed_message(client_socket, std::string(ciphertext.begin(), ciphertext.end()));
-    }
-    catch (const std::exception &e)
-    {
-        std::cerr << "Error: Failed to send HQC-256 ciphertext: " << e.what() << "\n";
-        return {};
-    }
-
-    return {shared_secret, ciphertext};
-}
 
 void help()
 {
@@ -1177,17 +1084,8 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
     std::cout << "Client: received salt (len=" << salt_bytes.size() << ")\n";
     std::cout << "DEBUG: salt(hex) = " << to_hex(salt_bytes) << std::endl;
 
-    PQCKeyMaterial pqc_material;
-    if (chosen_pqc_alg == "hqc-256")
-    {
-        std::cout << "Client: Using HQC-256 for PQC key exchange.\n";
-        pqc_material = get_pqckey_hqc(client_socket);
-    }
-    else
-    {
-        std::cout << "Client: Using ML-KEM-768 for PQC key exchange.\n";
-        pqc_material = get_pqckey(client_socket, chosen_pqc_alg);
-    }
+    std::cout << "Client: Using " << chosen_pqc_alg << " for PQC key exchange.\n";
+    PQCKeyMaterial pqc_material = get_pqckey(client_socket, chosen_pqc_alg);
     
     if (pqc_material.shared_secret.empty())
     {
@@ -1328,6 +1226,13 @@ std::vector<unsigned char> rekey_cli(tcp::socket &client_socket, string qkd_ip, 
 
 int main(int argc, char *argv[])
 {
+    if (!OPENSSL_init_crypto(0, nullptr))
+        return 1;
+    OSSL_PROVIDER *defprov = OSSL_PROVIDER_load(nullptr, "default");
+    OSSL_PROVIDER *oqsprov = OSSL_PROVIDER_load(nullptr, "oqsprovider");
+    if (!oqsprov)
+        std::cerr << "Warning: oqs-provider not loaded — HQC-256 will not be available\n";
+
     if (argc < 1 || argc > 3)
     {
         help();
@@ -1349,7 +1254,7 @@ int main(int argc, char *argv[])
         chosen_pqc_alg = "ML-KEM-768";
         break;
     case 2:
-        chosen_pqc_alg = "hqc-256";
+        chosen_pqc_alg = "hqc256";   // oqs-provider name for HQC-256
         break;
     default:
         std::cerr << "Invalid choice, defaulting to Kyber768\n";
@@ -1617,5 +1522,7 @@ int main(int argc, char *argv[])
     {
         rekey_thread.join();
     }
+    if (defprov) OSSL_PROVIDER_unload(defprov);
+    if (oqsprov) OSSL_PROVIDER_unload(oqsprov);
     return 0;
 }
