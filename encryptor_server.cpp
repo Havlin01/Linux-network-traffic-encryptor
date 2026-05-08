@@ -760,7 +760,7 @@ PQC_Alg_Properties get_pqc_alg_properties(const std::string &alg_name)
     return props;
 }
 
-bool decapsulate_kyber768(EVP_PKEY *private_key,
+bool decapsulate_pqc(EVP_PKEY *private_key,
                           const std::vector<uint8_t> &ciphertext,
                           std::vector<uint8_t> &shared_secret)
 {
@@ -855,7 +855,7 @@ PQCKeyMaterial get_pqckey(tcp::socket &new_socket, const std::string &alg_name)
     std::cout << "Server DEBUG: received ciphertext len = " << cipher_buf.size() << "\n";
     std::cout << "Server DEBUG: received ciphertext(hex) = " << to_hex(cipher_buf) << "\n";
 
-    if (!decapsulate_kyber768(server_private_key, cipher_buf, _shrd_key))
+    if (!decapsulate_pqc(server_private_key, cipher_buf, _shrd_key))
     {
         std::cerr << "Error: Kyber decapsulation failed.\n";
         EVP_PKEY_free(server_private_key);
